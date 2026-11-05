@@ -192,7 +192,7 @@
     return datosCat;
   }
   const textoVehiculos = (tids, d) => (tids || []).flatMap(t => d.vehDe[t] || [])
-    .map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${a.anio_desde}-${a.anio_hasta}`);
+    .map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${EPT.anios(a)}`);
 
   let buscaProd = '', tipoProd = '';
   EPT.pantalla({
@@ -227,7 +227,8 @@
     const okPal = pal.filter(w => !/^(19|20)\d{2}$/.test(w)).every(w => texto.includes(w));
     if (!okPal) return false;
     if (!anios.length) return true;
-    return (d.transDe[p.id] || []).flatMap(t => d.vehDe[t] || []).some(a => anios.every(y => y >= a.anio_desde && y <= a.anio_hasta));
+    // años vacíos = por confirmar (no se puede asegurar); sin "hasta" = hasta hoy
+    return (d.transDe[p.id] || []).flatMap(t => d.vehDe[t] || []).some(a => a.anio_desde != null && anios.every(y => y >= a.anio_desde && y <= (a.anio_hasta ?? 9999)));
   }
 
   function pintarProductos() {

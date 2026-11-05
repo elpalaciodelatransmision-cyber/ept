@@ -65,11 +65,11 @@
           <button type="button" class="liso abrir" data-abrir="${m.id}" aria-expanded="${abierta}"><b>${esc(m.nombre)}</b> <span class="mute">${d.modelos.filter(x => x.marca_id === m.id).length} modelos</span></button>
           <label class="check der"><input type="checkbox" data-act="vehiculo_marcas" data-id="${m.id}" ${m.activo ? 'checked' : ''} ${puede() ? '' : 'disabled'}><span>La trabajamos</span></label></li>
           ${abierta ? `<li class="modelos"><div>${mods.map(x => {
-            const apls = d.apl.filter(a => a.modelo_id === x.id).sort((a, b) => a.anio_desde - b.anio_desde);
+            const apls = d.apl.filter(a => a.modelo_id === x.id).sort((a, b) => (a.anio_desde ?? 9999) - (b.anio_desde ?? 9999));
             return `<div class="modelo ${x.activo ? '' : 'apagado'}"><div class="fila"><b>${esc(x.nombre)}</b>
               <label class="check der"><input type="checkbox" data-act="vehiculo_modelos" data-id="${x.id}" ${x.activo ? 'checked' : ''} ${puede() && m.activo ? '' : 'disabled'}><span>La trabajamos</span></label></div>
               ${apls.length ? `<ul class="apl">${apls.map(a => { const t = d.trans.find(y => y.id === a.transmision_id) || {};
-                return `<li${puede() ? ` class="toca" data-apl="${a.id}"` : ''}><b>${a.anio_desde === a.anio_hasta ? a.anio_desde : a.anio_desde + '–' + a.anio_hasta}</b> ${esc([a.motor, a.traccion].filter(Boolean).join(' · '))}
+                return `<li${puede() ? ` class="toca" data-apl="${a.id}"` : ''}><b>${EPT.anios(a)}</b> ${esc([a.motor, a.traccion].filter(Boolean).join(' · '))}
                   → <span class="codigo">${esc(t.codigo || '?')}</span> ${a.verificado ? '<span class="txt-ok">✔</span>' : '<span class="txt-aviso" title="Por verificar">?</span>'}</li>`; }).join('')}</ul>` : '<p class="mute" style="margin:4px 0 0">Sin transmisiones anotadas.</p>'}
               ${puede() ? `<button type="button" class="liso peque" data-nueva-apl="${x.id}">${icono('mas')}Años y transmisión</button>` : ''}</div>`; }).join('')}
             ${puede() ? `<button type="button" class="peque" data-nuevo-mod="${m.id}">${icono('mas')}Modelo de ${esc(m.nombre)}</button>` : ''}</div></li>` : ''}`; }).join('')}</ul>`
@@ -99,8 +99,8 @@
   function fichaAplicacion(modelo, a, d) {
     EPT.ventana({
       titulo: a ? 'Cambiar años y transmisión' : 'Años y transmisión',
-      cuerpo: `<div class="dos"><label class="campo">Desde el año<input name="desde" type="number" min="1950" max="2100" required value="${a ? a.anio_desde : ''}"></label>
-          <label class="campo">Hasta el año<input name="hasta" type="number" min="1950" max="2100" required value="${a ? a.anio_hasta : ''}"></label></div>
+      cuerpo: `<div class="dos"><label class="campo">Desde el año<input name="desde" type="number" min="1950" max="2100" value="${a && a.anio_desde != null ? a.anio_desde : ''}" placeholder="por confirmar"></label>
+          <label class="campo">Hasta el año<input name="hasta" type="number" min="1950" max="2100" value="${a && a.anio_hasta != null ? a.anio_hasta : ''}" placeholder="vacío = hasta hoy"></label></div>
         <div class="dos"><label class="campo">Motor <small class="opc">(opcional)</small><input name="motor" maxlength="60" value="${esc(a ? a.motor : '')}" placeholder="Ej. 1.8L 2ZR-FE"></label>
           <label class="campo">Tracción <small class="opc">(opcional)</small><input name="traccion" maxlength="20" value="${esc(a ? a.traccion : '')}" placeholder="FWD, 4WD…"></label></div>
         <label class="campo">Transmisión<select name="trans" required><option value="">Elija…</option>${d.trans.filter(t => t.activo).map(t => `<option value="${t.id}" ${a && a.transmision_id === t.id ? 'selected' : ''}>${esc(t.codigo)} · ${esc(t.fabricante)}</option>`).join('')}</select></label>
@@ -110,7 +110,7 @@
       alAbrir(f, dlg) { const q = f.querySelector('#btnQuitarApl'); if (q) q.addEventListener('click', async () => {
         try { await EPT.rpc('ept_catalogo_activar', { p_tabla: 'aplicaciones', p_id: a.id, p_activo: false }); dlg.close(); EPT.aviso('Quitado'); listo(); } catch (e) { EPT.aviso(EPT.error(e), true); } }); },
       async alGuardar(f) {
-        await EPT.rpc('ept_aplicacion_guardar', { p_id: a ? a.id : null, p: { modelo_id: modelo, anio_desde: Number(f.desde.value), anio_hasta: Number(f.hasta.value),
+        await EPT.rpc('ept_aplicacion_guardar', { p_id: a ? a.id : null, p: { modelo_id: modelo, anio_desde: f.desde.value ? Number(f.desde.value) : null, anio_hasta: f.hasta.value ? Number(f.hasta.value) : null,
           motor: f.motor.value, traccion: f.traccion.value, transmision_id: f.trans.value, fuente: f.fuente.value, verificado: f.verif.checked } });
         EPT.aviso('Guardado'); listo();
       },

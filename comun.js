@@ -27,6 +27,12 @@
     puede: p => EPT.permisos.has(p),
   };
 
+  // Años de una aplicación: "2009–2013", "2018 en adelante", "hasta 2001", "años por confirmar"
+  EPT.anios = a => a.anio_desde == null && a.anio_hasta == null ? 'años por confirmar'
+    : a.anio_desde == null ? 'hasta ' + a.anio_hasta
+    : a.anio_hasta == null ? a.anio_desde + ' en adelante'
+    : a.anio_desde === a.anio_hasta ? String(a.anio_desde) : a.anio_desde + '–' + a.anio_hasta;
+
   // Mensajes del servidor en palabras sencillas
   EPT.error = e => {
     const m = String((e && (e.message || e.error)) || e || '');
