@@ -1,0 +1,16 @@
+{
+  "name": "EPT Control Operativo · El Palacio de la Transmisión",
+  "short_name": "EPT",
+  "description": "Taller, Repuestos, Almacén y Caja de El Palacio de la Transmisión",
+  "lang": "es-DO",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#17202a",
+  "theme_color": "#17202a",
+  "icons": [
+    { "src": "icono-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

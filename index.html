@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17202a">
+<title>EPT Control Operativo</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icono-192.png">
+<link rel="apple-touch-icon" href="icono-192.png">
+<link rel="stylesheet" href="estilos.css">
+<script src="lib/supabase-2.45.4.js"></script>
+<script src="lib/xlsx-0.18.5.min.js" defer></script>
+</head>
+<body>
+
+<!-- Entrada -->
+<section class="entrada" id="vEntrada" hidden>
+  <form id="fEntrada" autocomplete="on">
+    <div class="marca">
+      <span class="logo"></span>
+      <div class="emp">EL PALACIO DE LA TRANSMISIÓN</div>
+      <div class="sis">EPT CONTROL OPERATIVO</div>
+    </div>
+    <label class="campo">Usuario
+      <input id="eUsuario" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <label class="campo">Contraseña
+      <input id="eClave" name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <p class="error" id="eError" role="alert"></p>
+    <button class="prin" type="submit">Entrar</button>
+  </form>
+</section>
+
+<!-- Programa -->
+<div class="app" id="vApp" hidden>
+  <aside class="side" id="side">
+    <div class="side-brand">
+      <span class="logo"></span>
+      <div><div class="emp">El Palacio de la Transmisión</div><div class="sis">CONTROL OPERATIVO</div></div>
+    </div>
+    <nav class="side-nav" id="menu" aria-label="Menú"></nav>
+    <div class="side-foot">
+      <div class="yo"><b id="yoNombre"></b><span id="yoDep"></span></div>
+      <button type="button" id="btnSalir">Salir</button>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="appbar">
+      <button type="button" id="btnMenu" class="liso" aria-label="Abrir menú">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div class="ttl"><h1 id="titulo"></h1><p id="subtitulo"></p></div>
+      <div class="fila" id="barraBotones"></div>
+    </div>
+    <div id="vista"></div>
+  </main>
+</div>
+
+<script src="comun.js"></script>
+<script src="taller.js"></script>
+<script src="servicios.js"></script>
+<script src="repuestos.js"></script>
+<script src="catalogo.js"></script>
+<script src="almacen.js"></script>
+<script src="caja.js"></script>
+<script src="reportes.js"></script>
+<script src="integracion.js"></script>
+<script src="admin.js"></script>
+<script>
+EPT.arrancar();
+// Instalar como app (solo cuando está publicada en internet; abierto como archivo no hace falta)
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
