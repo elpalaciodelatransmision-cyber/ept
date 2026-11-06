@@ -94,20 +94,20 @@
       titulo: 'Nueva orden de trabajo', boton: 'Crear orden',
       cuerpo: `
         <div class="dos">
-          <label class="campo">Placa<input name="placa" autocapitalize="characters" maxlength="12" placeholder="Busca si ya vino"></label>
-          <label class="campo">Teléfono del cliente<input name="telefono" type="tel" maxlength="20"></label>
+          <label class="campo">Nombre del cliente<input name="cliente" required maxlength="80"></label>
+          <label class="campo">Teléfono del cliente<input name="telefono" type="tel" maxlength="20" placeholder="Busca si ya vino"></label>
         </div>
         <p class="pista" id="pistaCliente" hidden></p>
-        <label class="campo">Nombre del cliente<input name="cliente" required maxlength="80"></label>
         <div class="tres-col">
           <label class="campo">Marca<input name="marca" maxlength="30"></label>
           <label class="campo">Modelo<input name="modelo" maxlength="30"></label>
           <label class="campo">Año<input name="anio" inputmode="numeric" maxlength="4"></label>
         </div>
         <div class="dos">
+          <label class="campo">Placa<input name="placa" autocapitalize="characters" maxlength="12" placeholder="Busca si ya vino"></label>
           <label class="campo">Kilometraje<input name="km" inputmode="numeric" maxlength="10"></label>
-          ${EPT.puede('mecanico.asignar') ? `<label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs)}</select></label>` : ''}
         </div>
+        ${EPT.puede('mecanico.asignar') ? `<div class="dos"><label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs)}</select></label></div>` : ''}
         <label class="campo">¿Por qué vino?<input name="motivo" maxlength="200" placeholder="Ej. no cambia a tercera"></label>
         ${EPT.puede('diagnostico.registrar') ? `<label class="campo">Diagnóstico <small class="opc">(si ya se sabe)</small><textarea name="diagnostico" maxlength="1000"></textarea></label>` : ''}
         <label class="campo">Observaciones <small class="opc">(opcional)</small><input name="obs" maxlength="300"></label>`,
