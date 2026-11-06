@@ -73,6 +73,14 @@
       if (parte.length < 1000) return todo;
     }
   };
+  // Orden alfabético en español (el servidor pone mayúsculas antes que minúsculas y las tildes al final):
+  // sin importar mayúsculas, tildes ni signos al principio ("#1 Brake" va con los números); empate por código.
+  const alfabeto = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+  EPT.alfabetico = (lista, campo = 'descripcion') => {
+    const llave = x => String(x[campo] || '').replace(/^[^0-9\p{L}]+/u, '');
+    return lista.map(x => [llave(x), x]).sort((a, b) => alfabeto.compare(a[0], b[0]) || String(a[1].codigo || '').localeCompare(String(b[1].codigo || '')))
+      .map(par => par[1]);
+  };
   EPT.funcion = async (nombre, cuerpo) => {
     const { data, error } = await sb.functions.invoke(nombre, { body: cuerpo });
     if (error) {

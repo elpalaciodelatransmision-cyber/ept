@@ -19,7 +19,7 @@
     `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${' '.repeat(nivel(s))}${esc(s.codigo)} · ${esc(s.nombre)}</option>`).join('');
 
   EPT.cargarServicios = () => EPT.leer(sb.from('servicios').select('id,codigo,nombre,descripcion,precio,piezas,padre_id').eq('activo', true));
-  EPT.cargarProductos = () => EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion'));
+  EPT.cargarProductos = () => EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion')).then(EPT.alfabetico);
   EPT.piezasTexto = (piezas, prods) => piezas.map(p => { const x = prods.find(q => q.id === p.producto_id); return `${x ? x.descripcion : '?'} × ${num(p.cantidad)}`; }).join(', ');
 
   let vistaServ = 'catalogo';

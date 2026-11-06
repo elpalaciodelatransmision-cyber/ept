@@ -176,7 +176,7 @@
   let datosCat = null;
   async function cargarCatalogo() {
     const [prods, tipos, pt, trans, apl, equiv, exist] = await Promise.all([
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto').order('descripcion')),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto').order('descripcion')).then(EPT.alfabetico),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),

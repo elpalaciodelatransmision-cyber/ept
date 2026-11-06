@@ -228,7 +228,9 @@
           ${sols.length ? sols.map(s => `
             <div class="sol">
               <div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(SOL, s.estado)}
-                ${['pendiente', 'pendiente_almacen'].includes(s.estado) && enTaller && EPT.puede('solicitud.crear') ? `<button type="button" class="liso peque der" data-cancelar-sol="${s.id}" data-n="${s.numero}">Cancelar</button>` : ''}</div>
+                ${s.estado !== 'cancelada' && enTaller && EPT.puede('solicitud.crear') ? `<span class="der botones">
+                  <button type="button" class="peque" data-agregar-sol="${s.id}" data-n="${s.numero}">${icono('mas')}Agregar piezas</button>
+                  ${['pendiente', 'pendiente_almacen'].includes(s.estado) ? `<button type="button" class="liso peque" data-cancelar-sol="${s.id}" data-n="${s.numero}">Cancelar</button>` : ''}</span>` : ''}</div>
               <table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th><th>Entregado</th><th>Recibido</th></tr></thead><tbody>
               ${s.lineas.map(l => `<tr><td>${esc(l.descripcion)}${l.codigo ? ` <small class="mute">${esc(l.codigo)}</small>` : ''}${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
                 <td>${num(l.cantidad)}</td><td>${num(l.despachada)}</td><td>${num(l.recibida)}</td></tr>`).join('')}
@@ -269,8 +271,10 @@
       ${enTaller && EPT.puede('orden.editar') && !desp.length ? `<p style="margin-top:16px"><button type="button" class="liso peque" data-acc="cancelar" style="color:var(--malo)">Cancelar esta orden</button></p>` : ''}`;
 
     const recargar = () => abrirOrden(id);
+    const abierta = [...sols].reverse().find(s => ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado));
     v.querySelectorAll('[data-acc]').forEach(b => b.addEventListener('click', () => ({
-      editar: () => editarOrden(o, recargar), pedir: () => pedirRepuestos(o, recargar), mano: () => manoDeObra(o, recargar),
+      // si hay un pedido que Repuestos no ha terminado de entregar, lo nuevo va a ese mismo pedido
+      editar: () => editarOrden(o, recargar), pedir: () => pedirRepuestos(o, recargar, abierta), mano: () => manoDeObra(o, recargar),
       diag: () => textoLibre('Diagnóstico', 'ept_diagnostico_agregar', o, recargar), nota: () => textoLibre('Nota', 'ept_observacion_agregar', o, recargar),
       terminar: () => terminar(o, recargar), aprobar: () => revisar(o, true, recargar), devolver: () => revisar(o, false, recargar),
       cancelar: () => cancelarOrden(o),
@@ -279,6 +283,7 @@
     v.querySelectorAll('[data-usar]').forEach(b => b.addEventListener('click', () => usar(o, b.dataset, recargar)));
     v.querySelectorAll('[data-devolver]').forEach(b => b.addEventListener('click', () => devolver(o, b.dataset, recargar)));
     v.querySelectorAll('[data-anular]').forEach(b => b.addEventListener('click', () => anularMano(b.dataset.anular, b.dataset.desc, recargar)));
+    v.querySelectorAll('[data-agregar-sol]').forEach(b => b.addEventListener('click', () => pedirRepuestos(o, recargar, { id: b.dataset.agregarSol, numero: b.dataset.n })));
     v.querySelectorAll('[data-cancelar-sol]').forEach(b => b.addEventListener('click', () => cancelarSolicitud(b.dataset, recargar)));
     window.scrollTo(0, 0);
   }
@@ -327,32 +332,74 @@
     });
   }
 
-  async function pedirRepuestos(o, listo) {
+  // sol = {id, numero}: agrega a ese mismo pedido en vez de hacer uno nuevo
+  async function pedirRepuestos(o, listo, sol) {
     const [mecs, prods] = await Promise.all([mecanicosActivos(),
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion'))]);
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,numero_parte').eq('activo', true).order('descripcion')).then(EPT.alfabetico)]);
     const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
     const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
     const porCodigo = new Map(prods.map(p => [p.codigo.toLowerCase(), p]));
+    // búsqueda propia (la lista del navegador con miles de piezas se pone lenta): todas las palabras deben aparecer
+    const llano = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')}`));
+    const buscar = q => {
+      const palabras = llano(q).split(/\s+/).filter(Boolean); if (!palabras.length) return [];
+      const r = [];
+      for (let i = 0; i < prods.length && r.length < 12; i++) if (palabras.every(w => textos[i].includes(w))) r.push(prods[i]);
+      return r;
+    };
     const renglon = () => `<div class="renglon">
-        <input name="pieza" list="dlPiezas" placeholder="Código o nombre de la pieza" maxlength="120">
+        <div class="busca-pieza"><input name="pieza" placeholder="Código o nombre de la pieza" maxlength="120" autocomplete="off"><ul class="sugerencias" hidden></ul></div>
         <input name="cant" type="number" min="1" step="any" value="1" inputmode="decimal" aria-label="Cantidad">
         <input name="nota" placeholder="Nota (opcional)" maxlength="120">
         <button type="button" class="liso" data-quitar aria-label="Quitar">✕</button></div>`;
     EPT.ventana({
-      titulo: 'Pedir repuestos · ' + ot(o.numero), boton: 'Enviar a Repuestos',
+      titulo: sol ? `Agregar piezas a S-${sol.numero} · ${ot(o.numero)}` : 'Pedir repuestos · ' + ot(o.numero),
+      boton: sol ? 'Agregar al pedido' : 'Enviar a Repuestos',
       cuerpo: `
-        <label class="campo">Mecánico que las pide<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>
+        ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>, que ya está en Repuestos.</p>`
+          : `<label class="campo">Mecánico que las pide<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
           <div id="renglones">${renglon()}</div>
-          <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>
-        <datalist id="dlPiezas">${prods.map(p => `<option value="${esc(etiqueta(p))}">`).join('')}</datalist>`,
+          <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>`,
       alAbrir(f) {
         const caja = f.querySelector('#renglones');
+        let espera = null;
+        const lista = inp => inp.parentElement.querySelector('.sugerencias');
+        const cerrar = inp => { const ul = lista(inp); ul.hidden = true; ul.innerHTML = ''; };
+        const elegir = (inp, li) => { inp.value = li.dataset.v; cerrar(inp); inp.closest('.renglon').querySelector('[name=cant]').focus(); };
+        const mostrar = inp => {
+          const ul = lista(inp); const r = buscar(inp.value);
+          ul.innerHTML = r.map((p, i) => `<li data-v="${esc(etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}</li>`).join('')
+            || (inp.value.trim() ? '<li class="nada">No está en el catálogo: se pedirá tal como lo escribió</li>' : '');
+          ul.hidden = !ul.innerHTML;
+        };
+        caja.addEventListener('input', e => {
+          if (e.target.name !== 'pieza') return;
+          clearTimeout(espera); espera = setTimeout(() => mostrar(e.target), 120);
+        });
+        caja.addEventListener('keydown', e => {
+          if (e.target.name !== 'pieza') return;
+          const ul = lista(e.target); if (ul.hidden) return;
+          const items = [...ul.querySelectorAll('li[data-v]')]; const act = ul.querySelector('li.activa'); let i = items.indexOf(act);
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault(); if (!items.length) return;
+            i = (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+            items.forEach(x => x.classList.remove('activa')); items[i].classList.add('activa'); items[i].scrollIntoView({ block: 'nearest' });
+          } else if (e.key === 'Enter') { e.preventDefault(); if (act) elegir(e.target, act); else cerrar(e.target); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cerrar(e.target); }
+        });
+        // tocar una sugerencia (pointerdown para que el campo no pierda el foco antes)
+        caja.addEventListener('pointerdown', e => {
+          const li = e.target.closest('.sugerencias li[data-v]'); if (!li) return;
+          e.preventDefault(); elegir(li.closest('.busca-pieza').querySelector('input'), li);
+        });
+        caja.addEventListener('focusout', e => { if (e.target.name === 'pieza') setTimeout(() => cerrar(e.target), 150); });
         f.querySelector('#otraPieza').addEventListener('click', () => { caja.insertAdjacentHTML('beforeend', renglon()); caja.lastElementChild.querySelector('input').focus(); });
         caja.addEventListener('click', e => { if (e.target.closest('[data-quitar]') && caja.children.length > 1) e.target.closest('.renglon').remove(); });
       },
       async alGuardar(f) {
-        if (!f.mecanico.value) throw new Error('Elija el mecánico');
+        if (!sol && !f.mecanico.value) throw new Error('Elija el mecánico');
         const lineas = [...f.querySelectorAll('#renglones .renglon')].map(r => {
           const texto = r.querySelector('[name=pieza]').value.trim(); const cant = Number(r.querySelector('[name=cant]').value);
           if (!texto) return null;
@@ -362,6 +409,10 @@
             : { descripcion: texto, cantidad: cant, observaciones: r.querySelector('[name=nota]').value };
         }).filter(Boolean);
         if (!lineas.length) throw new Error('Escriba al menos una pieza');
+        if (sol) {
+          const r = await EPT.rpc('ept_solicitud_agregar', { p_solicitud: sol.id, p_lineas: lineas });
+          EPT.aviso(`${r.agregadas} pieza${r.agregadas === 1 ? '' : 's'} agregada${r.agregadas === 1 ? '' : 's'} a S-${r.numero}`); listo(); return;
+        }
         const r = await EPT.rpc('ept_solicitud_crear', { p_orden: o.id, p_mecanico: f.mecanico.value, p_lineas: lineas });
         EPT.aviso(`Solicitud S-${r.numero} enviada a Repuestos`); listo();
       },

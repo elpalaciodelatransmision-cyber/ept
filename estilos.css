@@ -197,7 +197,12 @@ input.grande{font-size:24px;font-weight:700;min-height:56px;text-align:center}
 .renglon{display:grid;grid-template-columns:minmax(0,1fr) 90px minmax(0,.7fr) 40px;gap:8px;margin-bottom:8px;align-items:center}
 .renglon.cab{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin-bottom:4px}
 .renglon input[name=cant]{text-align:center;font-weight:700}
-.faltan{margin:0;padding-left:20px;display:grid;gap:8px}
+.busca-pieza{position:relative;min-width:0}
+.sugerencias{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:40;list-style:none;margin:0;padding:4px;max-height:300px;overflow-y:auto;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.22)}
+.sugerencias li{padding:9px 10px;border-radius:6px;font-size:14px;cursor:pointer;line-height:1.3}
+.sugerencias li b{font:700 12.5px ui-monospace,Consolas,monospace;margin-right:6px}
+.sugerencias li.activa,.sugerencias li[data-v]:hover{background:var(--panel2);outline:1px solid var(--line2)}
+.sugerencias li.nada{color:var(--ink2);cursor:default}.faltan{margin:0;padding-left:20px;display:grid;gap:8px}
 .faltan li{font-weight:600}
 .avisos li .q span{font-size:12.5px}
 .txt-malo{color:var(--malo)}
