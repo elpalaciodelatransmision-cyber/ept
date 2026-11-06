@@ -61,6 +61,18 @@
     if (error) throw new Error(EPT.error(error));
     return data;
   };
+  // Listas grandes: el servidor entrega máximo 1,000 filas por consulta; se piden por partes hasta traer todo.
+  // fabrica() arma la consulta cada vez; "orden" son las columnas únicas que dejan el orden fijo (para no saltar ni repetir).
+  EPT.leerTodo = async (fabrica, orden = ['id']) => {
+    const todo = [];
+    for (let desde = 0; ; desde += 1000) {
+      let q = fabrica();
+      for (const c of orden) q = q.order(c);
+      const parte = await EPT.leer(q.range(desde, desde + 999));
+      todo.push(...parte);
+      if (parte.length < 1000) return todo;
+    }
+  };
   EPT.funcion = async (nombre, cuerpo) => {
     const { data, error } = await sb.functions.invoke(nombre, { body: cuerpo });
     if (error) {

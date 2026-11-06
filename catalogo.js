@@ -27,9 +27,9 @@
   async function cargar() {
     const [marcas, modelos, trans, apl] = await Promise.all([
       EPT.leer(sb.from('vehiculo_marcas').select('id,nombre,activo').order('nombre')),
-      EPT.leer(sb.from('vehiculo_modelos').select('id,marca_id,nombre,activo').order('nombre').limit(20000)),
+      EPT.leerTodo(() => sb.from('vehiculo_modelos').select('id,marca_id,nombre,activo').order('nombre')),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres,notas,activo').order('codigo')),
-      EPT.leer(sb.from('aplicaciones').select('id,modelo_id,anio_desde,anio_hasta,motor,traccion,transmision_id,fuente,verificado,activo').eq('activo', true).limit(50000)),
+      EPT.leerTodo(() => sb.from('aplicaciones').select('id,modelo_id,anio_desde,anio_hasta,motor,traccion,transmision_id,fuente,verificado,activo').eq('activo', true)),
     ]);
     cache = { marcas, modelos, trans, apl };
     return cache;

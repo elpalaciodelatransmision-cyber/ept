@@ -174,13 +174,13 @@
   let datosCat = null;
   async function cargarCatalogo() {
     const [prods, tipos, pt, trans, apl, equiv, exist] = await Promise.all([
-      EPT.leer(sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo').order('descripcion').limit(10000)),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo').order('descripcion')),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
-      EPT.leer(sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true).limit(50000)),
+      EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
-      EPT.leer(sb.from('aplicaciones').select('transmision_id,anio_desde,anio_hasta,motor,modelo:vehiculo_modelos(nombre,activo,marca:vehiculo_marcas(nombre,activo))').eq('activo', true).limit(50000)),
-      EPT.leer(sb.from('equivalencias').select('id,producto_id,marca,numero_parte,clase,fuente,verificado').eq('activo', true).limit(50000)),
-      EPT.leer(sb.from('existencias').select('producto_id,ubicacion,cantidad').limit(50000)),
+      EPT.leerTodo(() => sb.from('aplicaciones').select('id,transmision_id,anio_desde,anio_hasta,motor,modelo:vehiculo_modelos(nombre,activo,marca:vehiculo_marcas(nombre,activo))').eq('activo', true)),
+      EPT.leerTodo(() => sb.from('equivalencias').select('id,producto_id,marca,numero_parte,clase,fuente,verificado').eq('activo', true)),
+      EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion']),
     ]);
     // solo marcas y modelos que se trabajan
     const aplicaciones = apl.filter(a => a.modelo && a.modelo.activo && a.modelo.marca && a.modelo.marca.activo);
@@ -220,7 +220,9 @@
     const pal = q.toLowerCase().split(/\s+/).filter(Boolean);
     const trans = (d.transDe[p.id] || []).map(id => d.trans.find(x => x.id === id)).filter(Boolean);
     const anios = pal.filter(w => /^(19|20)\d{2}$/.test(w)).map(Number);
-    const texto = [p.codigo, p.descripcion, p.marca_pieza, p.numero_parte, p.notas,
+    // el tipo de pieza va en español (las descripciones de los catálogos vienen en inglés): "junta", "banda", "filtro"…
+    const tipo = (d.tipos.find(t => t.id === p.tipo_id) || {}).nombre || '';
+    const texto = [p.codigo, p.descripcion, tipo, p.marca_pieza, p.numero_parte, p.notas,
       ...(d.eqDe[p.id] || []).flatMap(e => [e.marca, e.numero_parte]),
       ...trans.flatMap(x => [x.codigo, x.otros_nombres, x.fabricante]),
       ...(d.transDe[p.id] || []).flatMap(t => d.vehDe[t] || []).map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${a.motor}`)].join(' ').toLowerCase();

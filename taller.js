@@ -329,7 +329,7 @@
 
   async function pedirRepuestos(o, listo) {
     const [mecs, prods] = await Promise.all([mecanicosActivos(),
-      EPT.leer(sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion').limit(5000))]);
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion'))]);
     const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
     const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
     const porCodigo = new Map(prods.map(p => [p.codigo.toLowerCase(), p]));

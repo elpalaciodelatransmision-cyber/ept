@@ -109,8 +109,8 @@
     if (!window.XLSX) throw new Error('No se pudo cargar la herramienta de Excel');
     let datos, nombre;
     if (que === 'productos') {
-      const [prods, ex, tipos] = await Promise.all([EPT.leer(sb.from('productos').select('id,codigo,descripcion,unidad,precio,marca_pieza,numero_parte,minimo,tipo_id,activo').order('codigo').limit(20000)),
-        EPT.leer(sb.from('existencias').select('producto_id,ubicacion,cantidad').limit(50000)), EPT.leer(sb.from('pieza_tipos').select('id,nombre'))]);
+      const [prods, ex, tipos] = await Promise.all([EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,marca_pieza,numero_parte,minimo,tipo_id,activo').order('codigo')),
+        EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion']), EPT.leer(sb.from('pieza_tipos').select('id,nombre'))]);
       const e = {}; ex.forEach(x => { (e[x.producto_id] = e[x.producto_id] || {})[x.ubicacion] = Number(x.cantidad); });
       datos = [['Código', 'Nombre', 'Tipo', 'Marca', 'Número de parte', 'Unidad', 'Precio', 'Mínimo', 'Repuestos', 'Almacén', 'En camino', 'Activo'],
         ...prods.map(p => [p.codigo, p.descripcion, (tipos.find(t => t.id === p.tipo_id) || {}).nombre || '', p.marca_pieza, p.numero_parte, p.unidad, Number(p.precio), Number(p.minimo),
@@ -118,12 +118,12 @@
       nombre = 'productos';
     } else if (que === 'movimientos') {
       const desde = new Date(Date.now() - 90 * 864e5).toISOString();
-      const m = await EPT.leer(sb.from('movimientos_inventario').select('fecha,ubicacion,cantidad,tipo,nota,producto:productos(codigo,descripcion),orden:ordenes(numero),usuario:usuarios(nombre)').gte('fecha', desde).order('fecha').limit(50000));
+      const m = await EPT.leerTodo(() => sb.from('movimientos_inventario').select('fecha,ubicacion,cantidad,tipo,nota,producto:productos(codigo,descripcion),orden:ordenes(numero),usuario:usuarios(nombre)').gte('fecha', desde).order('fecha'));
       datos = [['Fecha', 'Código', 'Pieza', 'Dónde', 'Cantidad', 'Tipo', 'Orden', 'Quién', 'Nota'],
         ...m.map(x => [new Date(x.fecha).toLocaleString('es-DO'), x.producto.codigo, x.producto.descripcion, x.ubicacion, Number(x.cantidad), x.tipo.replace(/_/g, ' '), x.orden ? 'OT-' + String(x.orden.numero).padStart(5, '0') : '', x.usuario?.nombre || '', x.nota])];
       nombre = 'movimientos';
     } else {
-      const c = await EPT.leer(sb.from('integracion_codigos').select('codigo_externo,producto:productos(codigo,descripcion),conector:integracion_conectores(nombre)').limit(50000));
+      const c = await EPT.leerTodo(() => sb.from('integracion_codigos').select('codigo_externo,producto:productos(codigo,descripcion),conector:integracion_conectores(nombre)'), ['conector_id', 'codigo_externo']);
       datos = [['Programa', 'Código en ese programa', 'Código en EPT', 'Pieza'], ...c.map(x => [x.conector.nombre, x.codigo_externo, x.producto.codigo, x.producto.descripcion])];
       nombre = 'correspondencia_codigos';
     }

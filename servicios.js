@@ -19,7 +19,7 @@
     `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${' '.repeat(nivel(s))}${esc(s.codigo)} · ${esc(s.nombre)}</option>`).join('');
 
   EPT.cargarServicios = () => EPT.leer(sb.from('servicios').select('id,codigo,nombre,descripcion,precio,piezas,padre_id').eq('activo', true));
-  EPT.cargarProductos = () => EPT.leer(sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion').limit(5000));
+  EPT.cargarProductos = () => EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion'));
   EPT.piezasTexto = (piezas, prods) => piezas.map(p => { const x = prods.find(q => q.id === p.producto_id); return `${x ? x.descripcion : '?'} × ${num(p.cantidad)}`; }).join(', ');
 
   let vistaServ = 'catalogo';
@@ -145,7 +145,7 @@
     if (!window.XLSX) throw new Error('No se pudo cargar la herramienta de Excel. Revise la conexión.');
     const hechos = await EPT.leer(sb.from('mano_obra')
       .select('fecha,descripcion,importe,anulada,motivo_anulacion,mecanico:mecanicos(nombre),orden:ordenes(numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
-      .not('servicio_id', 'is', null).order('fecha', { ascending: false }).limit(5000));
+      .not('servicio_id', 'is', null).order('fecha', { ascending: false }).limit(1000));
     const lista = [...servs].sort(porCodigo);
     const hoja1 = [['Código', 'Servicio', 'Parte de', 'Precio RD$', 'Descripción', 'Piezas que usa'],
       ...lista.map(s => [s.codigo, s.nombre, (servs.find(x => x.id === s.padre_id) || {}).codigo || '', Number(s.precio), s.descripcion, EPT.piezasTexto(s.piezas, prods)])];
