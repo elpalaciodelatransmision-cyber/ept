@@ -4,6 +4,8 @@
   'use strict';
   const { sb, esc, icono } = EPT;
   Object.assign(EPT.ICONOS, {
+    camara: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+    enlace: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     estante: '<path d="M4 4v16M20 4v16M4 9h16M4 15h16"/><path d="M8 6.5h3M13 12h3M7 17.5h4"/>',
     entregar: '<path d="M3 12h13M12 7l5 5-5 5"/><path d="M20 5v14"/>',
     volver: '<path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
@@ -174,7 +176,7 @@
   let datosCat = null;
   async function cargarCatalogo() {
     const [prods, tipos, pt, trans, apl, equiv, exist] = await Promise.all([
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo').order('descripcion')),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto').order('descripcion')),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
@@ -239,11 +241,48 @@
     caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => {
       const e = d.ex[p.id] || {}; const r = e.repuestos || 0; const bajo = Number(p.minimo) > 0 && r <= Number(p.minimo);
       const trans = (d.transDe[p.id] || []).map(id => (d.trans.find(x => x.id === id) || {}).codigo).filter(Boolean);
-      return `<li class="toca" data-p="${p.id}"><span class="codigo">${esc(p.codigo)}</span>
+      return `<li class="toca" data-p="${p.id}">${p.foto ? `<img class="mini" src="${esc(urlFoto(p.foto))}" alt="" loading="lazy">` : ''}<span class="codigo">${esc(p.codigo)}</span>
         <div class="q"><b>${esc(p.descripcion)}</b><span>${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
         <div class="stock"><span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span></div></li>`; }).join('')}</ul>`
       : `<div class="vacio">${d.prods.length ? 'No se encontró nada con eso.' : 'Todavía no hay productos. Toque "Nuevo producto".'}</div>`;
     caja.querySelectorAll('[data-p]').forEach(li => li.addEventListener('click', () => fichaProducto(d.prods.find(p => p.id === li.dataset.p))));
+  }
+
+  // ---------- Foto de la pieza ----------
+  // Foto propia (tomada con el celular o subida), y dos ayudas para verla antes de mandar a comprar:
+  // la página del fabricante de donde salió el dato y una búsqueda de imágenes con su marca y número.
+  const urlFoto = ruta => ruta ? sb.storage.from('piezas').getPublicUrl(ruta).data.publicUrl : '';
+  function fotoPieza(p, d, puede) {
+    const fuente = (/Fuente: (https?:\/\/\S+)/.exec(p.notas || '') || [])[1] || '';
+    const trans = (d.transDe[p.id] || []).map(id => (d.trans.find(x => x.id === id) || {}).codigo).filter(Boolean);
+    const q = [p.marca_pieza, p.numero_parte || p.codigo, trans[0] ? trans[0].replace(/\s*\(.*\)/, '') : '', 'transmission'].filter(Boolean).join(' ');
+    return `<div class="foto-pieza">
+      <div class="marco">${p.foto ? `<img src="${esc(urlFoto(p.foto))}" alt="Foto de ${esc(p.descripcion)}">` : '<span>Sin foto propia todavía</span>'}</div>
+      <div class="botones-foto">
+        ${puede ? `<label class="btn peque">${icono('camara')}${p.foto ? 'Cambiar foto' : 'Tomar o subir foto'}<input type="file" accept="image/*" capture="environment" id="fotoArchivo" hidden></label>` : ''}
+        ${fuente ? `<a class="btn peque" href="${esc(fuente)}" target="_blank" rel="noopener">${icono('enlace')}Ver en el catálogo del fabricante</a>` : ''}
+        <a class="btn peque" href="https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}" target="_blank" rel="noopener">${icono('buscar')}Buscar fotos en internet</a>
+        <small class="mute">Para mandar a comprar: ${esc([p.marca_pieza, p.numero_parte].filter(Boolean).join(' ') || p.codigo)}</small>
+      </div></div>`;
+  }
+  async function subirFoto(p, archivo, dlg) {
+    if (!archivo) return;
+    try {
+      EPT.aviso('Subiendo la foto…');
+      // se achica a 1200 px y se guarda como JPG para que cargue rápido en el celular
+      const img = await createImageBitmap(archivo);
+      const k = Math.min(1, 1200 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+      const ruta = `${p.id}/${Date.now()}.jpg`;
+      const { error } = await sb.storage.from('piezas').upload(ruta, blob, { contentType: 'image/jpeg' });
+      if (error) throw new Error(/row-level|permission|403/i.test(error.message) ? 'No tiene permiso para subir fotos' : error.message);
+      await EPT.rpc('ept_producto_foto', { p_id: p.id, p_ruta: ruta });
+      p.foto = ruta;
+      EPT.aviso('Foto guardada');
+      dlg.close(); fichaProducto(p);
+    } catch (e) { EPT.aviso(EPT.error(e), true); }
   }
 
   async function fichaProducto(p) {
@@ -257,6 +296,7 @@
     EPT.ventana({
       titulo: p ? p.codigo + ' · ' + p.descripcion : 'Nuevo producto', boton: puede ? 'Guardar' : '',
       cuerpo: `
+        ${p ? fotoPieza(p, d, puede) : ''}
         ${p ? `<div class="contadores"><span><b>${num(e.repuestos || 0)}</b> en Repuestos</span><span><b>${num(e.almacen || 0)}</b> en Almacén</span><span><b>${num(e.transito || 0)}</b> en camino</span></div>` : ''}
         <fieldset ${puede ? '' : 'disabled'} class="limpio">
         <div class="dos"><label class="campo">Código <small class="opc">${p ? '' : '(vacío = SC-…)'}</small><input name="codigo" value="${esc(p ? p.codigo : '')}" maxlength="40" autocapitalize="characters"></label>
@@ -282,6 +322,8 @@
           ${movs.length ? `<div class="campo">Últimos movimientos<ul class="lista">${movs.map(m => `<li style="padding:6px 0;min-height:0"><div class="q"><b>${esc(TIPOMOV[m.tipo] || m.tipo)} · ${m.ubicacion === 'almacen' ? 'Almacén' : m.ubicacion === 'transito' ? 'En camino' : 'Repuestos'}</b>
             <span>${fecha(m.fecha)} · ${esc(m.usuario?.nombre || '')}${m.nota ? ' · ' + esc(m.nota) : ''}</span></div><b class="${Number(m.cantidad) < 0 ? 'txt-malo' : 'txt-ok'}">${Number(m.cantidad) > 0 ? '+' : ''}${num(m.cantidad)}</b></li>`).join('')}</ul></div>` : ''}` : ''}`,
       alAbrir(f, dlg) {
+        const fa = f.querySelector('#fotoArchivo');
+        if (fa) fa.addEventListener('change', () => subirFoto(p, fa.files[0], dlg));
         f.querySelector('#bTrans').addEventListener('input', ev => { const q = ev.target.value.trim().toLowerCase();
           f.querySelectorAll('#lTrans label').forEach(l => { l.hidden = q && !l.textContent.toLowerCase().includes(q); }); });
         const be = f.querySelector('#btnEq'); if (be) be.addEventListener('click', () => { dlg.close(); nuevaEquivalencia(p); });

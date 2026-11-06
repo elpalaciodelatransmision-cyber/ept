@@ -239,6 +239,17 @@ tr.total td{border-top:2px solid var(--ink);background:var(--panel2)}
 .tabla.auditoria td{font-size:13.5px;vertical-align:top}
 @media (max-width:860px){.filtros .ancho2{grid-column:1/-1}}
 
+/* ---------- foto de la pieza ---------- */
+.foto-pieza{display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px;align-items:start}
+.foto-pieza .marco{width:200px;height:150px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel2);display:grid;place-items:center;overflow:hidden}
+.foto-pieza .marco img{width:100%;height:100%;object-fit:contain;background:#fff}
+.foto-pieza .marco span{color:var(--ink2);font-size:13.5px;padding:10px;text-align:center}
+.foto-pieza .botones-foto{display:grid;gap:8px;justify-items:start}
+.foto-pieza .botones-foto .btn{text-decoration:none;cursor:pointer}
+.foto-pieza small{font-size:13px;color:var(--ink2)}
+img.mini{width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);flex:0 0 auto;background:#fff}
+@media (max-width:860px){.foto-pieza{grid-template-columns:1fr}.foto-pieza .marco{width:100%;height:200px}}
+
 /* ---------- caja ---------- */
 .totales{display:grid;gap:4px;margin:0 18px 0 auto;padding:14px 0 16px;width:min(360px,calc(100% - 36px))}
 .totales div{display:flex;justify-content:space-between;gap:16px;font-size:15px}
