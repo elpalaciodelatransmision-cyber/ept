@@ -77,6 +77,7 @@
     if (o.estado === 'facturada' && EPT.puede('caja.cerrar') && (saldo === 0 || EPT.puede('autorizar'))) acciones.push(['cerrar', 'ok', 'Cerrar orden']);
     const filaTotal = (t, val, cls = '') => `<div class="${cls}"><span>${t}</span><b>${val}</b></div>`;
     v.innerHTML = `
+      <div class="no-imprimir">${EPT.barraPasos(8, o.estado === 'cerrada')}</div>
       ${pend.length ? `<div class="alerta">${icono('nota')}<div><b>Esperando autorización:</b> ${pend.map(a => `${a.tipo === 'descuento' ? 'descuento' : 'cargo'} ${dinero(a.importe)} (${esc(a.detalle)})`).join(', ')}. No se puede facturar hasta que Administración responda.</div></div>` : ''}
       <div class="panel comprobante"><div class="cuerpo">
         <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>Expediente de cobro · ${f ? 'factura de referencia ' + esc(f.numero_externo) : 'antes de facturar'} · no es comprobante fiscal</span></div></div>

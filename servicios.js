@@ -19,7 +19,6 @@
     `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${' '.repeat(nivel(s))}${esc(s.codigo)} · ${esc(s.nombre)}</option>`).join('');
 
   EPT.cargarServicios = () => EPT.leer(sb.from('servicios').select('id,codigo,nombre,descripcion,precio,piezas,padre_id').eq('activo', true));
-  EPT.cargarProductos = () => EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad').eq('activo', true).order('descripcion')).then(EPT.alfabetico);
   EPT.piezasTexto = (piezas, prods) => piezas.map(p => { const x = prods.find(q => q.id === p.producto_id); return `${x ? x.descripcion : '?'} × ${num(p.cantidad)}`; }).join(', ');
 
   let vistaServ = 'catalogo';
@@ -78,14 +77,13 @@
 
   // Lista de piezas que usa un servicio: se escribe código o nombre, cantidad y "Agregar"
   function selectorPiezas(caja, piezas, prods) {
-    const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    const buscar = t => { const b = t.trim().toLowerCase(); return prods.find(p => etiqueta(p).toLowerCase() === b || p.codigo.toLowerCase() === b)
-      || (prods.filter(p => p.descripcion.toLowerCase().includes(b)).length === 1 ? prods.find(p => p.descripcion.toLowerCase().includes(b)) : null); };
+    // buscador rápido compartido; si escriben un nombre sin elegir y solo hay una pieza que coincide, se toma esa
+    const bp = EPT.sugerencias(caja, prods, { libre: false });
+    const buscar = texto => { const r = bp.deTexto(texto); if (r) return r; const v = bp.buscar(texto, 2); return v.length === 1 ? v[0] : null; };
     const pintar = () => {
       caja.innerHTML = `${prods.length ? `<div class="renglon" style="grid-template-columns:minmax(0,1fr) 90px auto">
-          <input class="pz-in" list="dlPzServ" placeholder="Código o nombre de la pieza"><input class="pz-q" type="number" min="1" step="any" value="1" inputmode="decimal" aria-label="Cantidad">
-          <button type="button" class="pz-add">Agregar</button></div><p class="error pz-err" style="margin:0"></p>
-          <datalist id="dlPzServ">${prods.map(p => `<option value="${esc(etiqueta(p))}">`).join('')}</datalist>`
+          ${EPT.campoPieza()}<input class="pz-q" type="number" min="1" step="any" value="1" inputmode="decimal" aria-label="Cantidad">
+          <button type="button" class="pz-add">Agregar</button></div><p class="error pz-err" style="margin:0"></p>`
         : '<p class="mute" style="margin:0">Todavía no hay productos cargados en Repuestos.</p>'}
         ${piezas.length ? `<ul class="lista">${piezas.map((p, i) => { const x = prods.find(q => q.id === p.producto_id); return `<li style="padding:8px 0;min-height:0">
           <div class="q"><b>${esc(x ? x.descripcion : '(pieza)')}</b><span>${esc(x ? x.codigo : '')}</span></div>
@@ -93,10 +91,10 @@
           <button type="button" class="liso peque" data-quitar="${i}">Quitar</button></li>`; }).join('')}</ul>` : '<p class="mute" style="margin:6px 0 0">Sin piezas.</p>'}`;
       const add = caja.querySelector('.pz-add');
       if (add) add.addEventListener('click', () => {
-        const p = buscar(caja.querySelector('.pz-in').value); const q = Number(caja.querySelector('.pz-q').value) || 1;
+        const p = buscar(caja.querySelector('.pz-busca').value); const q = Number(caja.querySelector('.pz-q').value) || 1;
         if (!p) { caja.querySelector('.pz-err').textContent = 'No se encontró esa pieza. Escriba el código.'; return; }
         const ya = piezas.find(x => x.producto_id === p.id); if (ya) ya.cantidad += q; else piezas.push({ producto_id: p.id, cantidad: q });
-        pintar(); caja.querySelector('.pz-in').focus();
+        pintar(); caja.querySelector('.pz-busca').focus();
       });
       caja.querySelectorAll('input[data-i]').forEach(x => x.addEventListener('change', () => { piezas[+x.dataset.i].cantidad = Math.max(1, Number(x.value) || 1); x.value = piezas[+x.dataset.i].cantidad; }));
       caja.querySelectorAll('[data-quitar]').forEach(b => b.addEventListener('click', () => { piezas.splice(+b.dataset.quitar, 1); pintar(); }));

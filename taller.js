@@ -59,7 +59,7 @@
   });
 
   async function pintarLista() {
-    let q = sb.from('ordenes').select('id,numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)')
+    let q = sb.from('ordenes').select('id,numero,fecha,estado,paso,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)')
       .order('numero', { ascending: false }).limit(100);
     if (filtro === 'taller') q = q.in('estado', EN_TALLER);
     if (filtro === 'revision') q = q.eq('estado', 'en_revision');
@@ -74,7 +74,7 @@
       <li class="toca" data-id="${o.id}">
         <div class="q"><b>${ot(o.numero)} · ${esc([o.vehiculo?.marca, o.vehiculo?.modelo].filter(Boolean).join(' '))} ${esc(o.vehiculo?.placa || '')}</b>
           <span>${esc(o.cliente?.nombre || '')} · ${o.mecanico ? esc(o.mecanico.nombre) : 'sin mecánico'}</span></div>
-        ${chip(ESTADOS, o.estado)}
+        ${EN_TALLER.includes(o.estado) || o.estado === 'en_revision' ? `<span class="estado info">Paso ${o.paso} · ${esc(EPT.PASOS[o.paso - 1])}</span>` : chip(ESTADOS, o.estado)}
       </li>`).join('')}</ul>`
       : `<div class="vacio">${buscado ? 'No se encontró nada con eso.' : filtro === 'taller' ? 'No hay carros en el taller ahora.' : 'No hay órdenes aquí.'}</div>`;
     caja.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('click', () => abrirOrden(li.dataset.id)));
@@ -150,7 +150,8 @@
 
   // ---------- Expediente de una orden ----------
   async function cargarOrden(id) {
-    const [o, sols, desp, saldo, mano, diags, notas] = await Promise.all([
+    // todo a la vez (antes la segunda parte esperaba a la primera)
+    const [o, sols, desp, saldo, mano, diags, notas, cons, devs, reqs] = await Promise.all([
       EPT.leer(sb.from('ordenes').select('*,cliente:clientes(id,nombre,telefono),vehiculo:vehiculos(id,marca,modelo,anio,placa),mecanico:mecanicos(id,nombre)').eq('id', id).single()),
       EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,mecanico:mecanicos(nombre),lineas:solicitud_lineas(id,descripcion,codigo,cantidad,unidad,despachada,recibida,observaciones)').eq('orden_id', id).order('numero')),
       EPT.leer(sb.from('despachos').select('id,fecha,usuario:usuarios(nombre),lineas:despacho_lineas(id,cantidad,producto:productos(descripcion,unidad),recepcion:recepciones_taller(cantidad_recibida,fecha,nota))').eq('orden_id', id).order('fecha')),
@@ -158,13 +159,20 @@
       EPT.leer(sb.from('mano_obra').select('id,descripcion,importe,fecha,adicional,anulada,motivo_anulacion,mecanico:mecanicos(nombre)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('diagnosticos').select('texto,fecha,usuario:usuarios(nombre)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('observaciones').select('texto,fecha,departamento,usuario:usuarios(nombre)').eq('orden_id', id).order('fecha')),
-    ]);
-    const [cons, devs] = await Promise.all([
       EPT.leer(sb.from('consumos').select('utilizada,danada,observaciones,fecha,producto:productos(descripcion)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('devoluciones').select('cantidad,estado,fecha,producto:productos(descripcion)').eq('orden_id', id).order('fecha')),
+      EPT.leer(sb.from('requisiciones').select('id,numero,estado,solicitud_id,transferencias(id,numero,estado)').eq('orden_id', id).order('numero')),
     ]);
-    return { o, sols, desp, saldo, mano, diags, notas, cons, devs };
+    return { o, sols, desp, saldo, mano, diags, notas, cons, devs, reqs };
   }
+
+  // ---------- Expediente de una orden: un paso a la vez ----------
+  // Arriba la barra de los 8 pasos; en medio SOLO el paso en que va la orden, con su botón Siguiente;
+  // abajo, cerrado, todo el expediente para consultar. El paso lo guarda el servidor: se retoma donde quedó.
+  const QUIEN = { 1: 'el Taller', 2: 'el Taller', 3: 'el Taller', 4: 'Repuestos', 5: 'el Taller', 6: 'el Taller', 7: 'el jefe de taller', 8: 'Caja' };
+  const PERMISO_PASO = { 1: 'orden.editar', 2: 'diagnostico.registrar', 3: 'solicitud.crear', 4: 'repuestos.despachar', 5: 'recepcion.confirmar', 6: 'trabajo.finalizar', 7: 'orden.revisar' };
+  const ABIERTA = ['pendiente', 'parcial', 'pendiente_almacen'];
+  const verCaja = () => ['caja.facturar', 'caja.pago', 'caja.cerrar', 'caja.cargo', 'caja.observar'].some(p => EPT.puede(p));
 
   async function abrirOrden(id) {
     EPT.actual = 'ordenes';
@@ -172,8 +180,9 @@
     v.innerHTML = '<div class="vacio">Cargando…</div>';
     let x;
     try { x = await cargarOrden(id); } catch (e) { v.innerHTML = `<div class="panel"><div class="vacio">${esc(EPT.error(e))}</div></div>`; return; }
-    const { o, sols, desp, saldo, mano, diags, notas, cons, devs } = x;
+    const { o, sols, desp, saldo, mano, diags, notas } = x;
     const enTaller = EN_TALLER.includes(o.estado);
+    const cancelada = o.estado === 'cancelada';
     const veh = [o.vehiculo.marca, o.vehiculo.modelo, o.vehiculo.anio].filter(Boolean).join(' ');
     EPT.$('#titulo').textContent = ot(o.numero);
     EPT.$('#subtitulo').textContent = `${veh} ${o.vehiculo.placa}`.trim();
@@ -184,21 +193,13 @@
     desp.forEach(d => d.lineas.forEach(l => { l.recepcion = l.recepcion ? [].concat(l.recepcion) : []; }));
     const sinRecibir = desp.flatMap(d => d.lineas.filter(l => !l.recepcion.length).map(l => ({ ...l, fecha: d.fecha })));
     const totalMano = mano.filter(m => !m.anulada).reduce((s, m) => s + Number(m.importe), 0);
-
-    // Botones grandes: solo lo que esta persona puede hacer ahora
-    const acciones = [];
-    if (enTaller) {
-      if (EPT.puede('solicitud.crear')) acciones.push(['pedir', 'caja', 'Pedir repuestos']);
-      if (EPT.puede('mano_obra.registrar')) acciones.push(['mano', 'llave', 'Servicio / mano de obra']);
-      if (EPT.puede('diagnostico.registrar')) acciones.push(['diag', 'nota', 'Diagnóstico']);
-      if (EPT.puede('trabajo.finalizar')) acciones.push(['terminar', 'ok', 'Terminé el trabajo']);
-    }
-    if (o.estado === 'en_revision' && EPT.puede('orden.revisar')) {
-      acciones.push(['aprobar', 'ok', 'Aprobar y enviar a Caja'], ['devolver', 'atras', 'Devolver al taller']);
-    }
+    const abiertas = sols.filter(s => ABIERTA.includes(s.estado));
+    const paso = o.paso;
+    const meToca = !cancelada && !!PERMISO_PASO[paso] && EPT.puede(PERMISO_PASO[paso]);
+    const P = cancelada ? null : contenidoPaso({ ...x, sinRecibir, totalMano, abiertas, meToca });
 
     v.innerHTML = `
-      ${o.nota_estado && o.estado !== 'cancelada' ? `<div class="alerta">${icono('nota')}<div><b>Devuelta por el jefe de taller:</b> ${esc(o.nota_estado)}</div></div>` : ''}
+      ${o.nota_estado && paso === 6 && enTaller ? `<div class="alerta">${icono('nota')}<div><b>Devuelta para corregir:</b> ${esc(o.nota_estado)}</div></div>` : ''}
       <div class="panel ficha-ot">
         <div class="cuerpo">
           <div class="fila"><span class="ot-num">${ot(o.numero)}</span>${chip(ESTADOS, o.estado)}
@@ -210,73 +211,56 @@
             <div><dt>Kilometraje</dt><dd>${esc(o.kilometraje || '—')}</dd></div>
             <div class="ancho"><dt>Motivo</dt><dd>${esc(o.motivo || '—')}</dd></div>
             ${o.observaciones ? `<div class="ancho"><dt>Observaciones</dt><dd>${esc(o.observaciones)}</dd></div>` : ''}
-            ${o.estado === 'cancelada' ? `<div class="ancho"><dt>Cancelada</dt><dd>${esc(o.nota_estado)}</dd></div>` : ''}
+            ${cancelada ? `<div class="ancho"><dt>Cancelada</dt><dd>${esc(o.nota_estado)}</dd></div>` : ''}
           </dl>
         </div>
       </div>
 
-      ${acciones.length ? `<div class="acciones" style="margin:16px 0">${acciones.map(([k, ic, t]) =>
-        `<button type="button" class="accion" data-acc="${k}">${icono(ic)}${esc(t)}</button>`).join('')}</div>` : ''}
+      ${P ? `${EPT.barraPasos(paso, o.estado === 'cerrada')}
+      <section class="panel paso-actual">
+        <header><h2><span class="paso-n">Paso ${paso} de 8</span>${esc(EPT.PASOS[paso - 1])}</h2>
+          <span class="der le-toca">Le toca a ${esc(QUIEN[paso])}</span></header>
+        <div class="cuerpo">${P.html}</div>
+        ${P.pie ? `<div class="pie-paso">${P.pie}</div>` : ''}
+      </section>` : ''}
 
-      ${sinRecibir.length && EPT.puede('recepcion.confirmar') && enTaller ? `
-      <div class="panel destacado"><header><h2>Confirme lo que recibió el mecánico</h2></header>
-        <ul class="lista">${sinRecibir.map(l => `<li><div class="q"><b>${num(l.cantidad)} ${esc(l.producto.unidad)} · ${esc(l.producto.descripcion)}</b><span>Entregado ${fecha(l.fecha)}</span></div>
-          <button type="button" class="prin" data-recibir="${l.id}" data-cant="${l.cantidad}" data-desc="${esc(l.producto.descripcion)}">Recibí</button></li>`).join('')}</ul></div>` : ''}
-
-      <div class="rejilla">
-        <div class="panel"><header><h2>Repuestos pedidos</h2></header>
-          ${sols.length ? sols.map(s => `
-            <div class="sol">
-              <div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(SOL, s.estado)}
-                ${s.estado !== 'cancelada' && enTaller && EPT.puede('solicitud.crear') ? `<span class="der botones">
-                  <button type="button" class="peque" data-agregar-sol="${s.id}" data-n="${s.numero}">${icono('mas')}Agregar piezas</button>
-                  ${['pendiente', 'pendiente_almacen'].includes(s.estado) ? `<button type="button" class="liso peque" data-cancelar-sol="${s.id}" data-n="${s.numero}">Cancelar</button>` : ''}</span>` : ''}</div>
-              <table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th><th>Entregado</th><th>Recibido</th></tr></thead><tbody>
-              ${s.lineas.map(l => `<tr><td>${esc(l.descripcion)}${l.codigo ? ` <small class="mute">${esc(l.codigo)}</small>` : ''}${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
-                <td>${num(l.cantidad)}</td><td>${num(l.despachada)}</td><td>${num(l.recibida)}</td></tr>`).join('')}
-              </tbody></table>
-            </div>`).join('') : '<div class="vacio">No se han pedido repuestos.</div>'}
+      <details class="expediente">
+        <summary>Ver todo el expediente</summary>
+        <div class="rejilla">
+          <div class="panel"><header><h2>Repuestos pedidos</h2></header>
+            ${sols.length ? sols.map(s => `<div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(SOL, s.estado)}</div>
+              ${tablaPedido(s, true)}</div>`).join('') : '<div class="vacio">No se han pedido repuestos.</div>'}
+          </div>
+          <div class="panel"><header><h2>Piezas que tiene el mecánico</h2></header>${tablaSaldo(saldo, false)}</div>
+          <div class="panel"><header><h2>Servicios y mano de obra</h2>${mano.length ? `<span class="der"><b>${dinero(totalMano)}</b></span>` : ''}</header>${listaMano(mano, false)}</div>
+          <div class="panel"><header><h2>Diagnóstico y notas</h2>${cancelada ? '' : `<button type="button" class="liso peque der" data-acc="nota">${icono('mas')}Nota</button>`}</header>
+            ${diags.length || notas.length ? `<ul class="lista">${[
+              ...diags.map(d => ({ f: d.fecha, t: d.texto, q: 'Diagnóstico · ' + (d.usuario?.nombre || '') })),
+              ...notas.map(n => ({ f: n.fecha, t: n.texto, q: (EPT.DEPARTAMENTOS[n.departamento] || '') + ' · ' + (n.usuario?.nombre || '') })),
+            ].sort((a, b) => a.f.localeCompare(b.f)).map(n => `<li><div class="q"><span>${esc(n.q)} · ${fecha(n.f)}</span><div class="texto">${esc(n.t)}</div></div></li>`).join('')}</ul>`
+              : '<div class="vacio">Sin diagnóstico todavía.</div>'}
+          </div>
         </div>
-
-        <div class="panel"><header><h2>Piezas que tiene el mecánico</h2></header>
-          ${saldo.length ? `<div class="desliza"><table class="tabla"><thead><tr><th>Pieza</th><th>Recibió</th><th>Usó</th><th>Devolvió</th><th>Le quedan</th><th></th></tr></thead><tbody>
-            ${saldo.map(p => `<tr><td>${esc(p.descripcion)}</td><td>${num(p.entregado)}</td><td>${num(Number(p.utilizado) + Number(p.danado))}${Number(p.danado) ? ` <small class="mute">(${num(p.danado)} dañ.)</small>` : ''}</td>
-              <td>${num(p.devuelto)}</td><td><b class="${Number(p.en_mano) ? 'txt-aviso' : 'txt-ok'}">${num(p.en_mano)}</b></td>
-              <td><div class="botones">${Number(p.en_mano) > 0 && enTaller ? `
-                ${EPT.puede('consumo.registrar') ? `<button type="button" class="peque" data-usar="${p.producto_id}" data-max="${p.en_mano}" data-desc="${esc(p.descripcion)}">Usó</button>` : ''}
-                ${EPT.puede('devolucion.registrar') ? `<button type="button" class="peque" data-devolver="${p.producto_id}" data-max="${p.en_mano}" data-desc="${esc(p.descripcion)}">Devolver</button>` : ''}` : ''}</div></td></tr>`).join('')}
-          </tbody></table></div>` : '<div class="vacio">Todavía no ha recibido piezas.</div>'}
+        <div class="panel" style="margin-top:16px"><header><h2>Línea de tiempo</h2></header>
+          <ol class="tiempo">${lineaDeTiempo(x).map(e => `<li><span class="cuando">${fecha(e.f)}</span><span class="que">${esc(e.t)}</span>${e.q ? `<span class="quien">${esc(e.q)}</span>` : ''}</li>`).join('')}</ol>
         </div>
-
-        <div class="panel"><header><h2>Servicios y mano de obra</h2>${mano.length ? `<span class="der"><b>${dinero(totalMano)}</b></span>` : ''}</header>
-          ${mano.length ? `<ul class="lista">${mano.map(m => `<li class="${m.anulada ? 'anulada' : ''}"><div class="q"><b>${esc(m.descripcion)}</b>
-            <span>${esc(m.mecanico?.nombre || '')}${m.adicional ? ' · adicional' : ''}${m.anulada ? ` · <span class="txt-malo">Anulada: ${esc(m.motivo_anulacion)}</span>` : ''}</span></div>
-            <b class="precio">${dinero(m.importe)}</b>
-            ${!m.anulada && enTaller && EPT.puede('mano_obra.registrar') ? `<button type="button" class="liso peque" data-anular="${m.id}" data-desc="${esc(m.descripcion)}">Anular</button>` : ''}</li>`).join('')}</ul>`
-            : '<div class="vacio">Falta registrar la mano de obra.</div>'}
-        </div>
-
-        <div class="panel"><header><h2>Diagnóstico y notas</h2><button type="button" class="liso peque der" data-acc="nota">${icono('mas')}Nota</button></header>
-          ${diags.length || notas.length ? `<ul class="lista">${[
-            ...diags.map(d => ({ f: d.fecha, t: d.texto, q: 'Diagnóstico · ' + (d.usuario?.nombre || '') })),
-            ...notas.map(n => ({ f: n.fecha, t: n.texto, q: (EPT.DEPARTAMENTOS[n.departamento] || '') + ' · ' + (n.usuario?.nombre || '') })),
-          ].sort((a, b) => a.f.localeCompare(b.f)).map(n => `<li><div class="q"><span>${esc(n.q)} · ${fecha(n.f)}</span><div class="texto">${esc(n.t)}</div></div></li>`).join('')}</ul>`
-            : '<div class="vacio">Sin diagnóstico todavía.</div>'}
-        </div>
-      </div>
-
-      <div class="panel" style="margin-top:16px"><header><h2>Línea de tiempo</h2></header>
-        <ol class="tiempo">${lineaDeTiempo(x).map(e => `<li><span class="cuando">${fecha(e.f)}</span><span class="que">${esc(e.t)}</span>${e.q ? `<span class="quien">${esc(e.q)}</span>` : ''}</li>`).join('')}</ol>
-      </div>
-      ${enTaller && EPT.puede('orden.editar') && !desp.length ? `<p style="margin-top:16px"><button type="button" class="liso peque" data-acc="cancelar" style="color:var(--malo)">Cancelar esta orden</button></p>` : ''}`;
+      </details>
+      ${enTaller && paso <= 3 && EPT.puede('orden.editar') && !desp.length ? `<p style="margin-top:16px"><button type="button" class="liso peque" data-acc="cancelar" style="color:var(--malo)">Cancelar esta orden</button></p>` : ''}`;
 
     const recargar = () => abrirOrden(id);
-    const abierta = [...sols].reverse().find(s => ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado));
+    const abierta = abiertas[abiertas.length - 1];
     v.querySelectorAll('[data-acc]').forEach(b => b.addEventListener('click', () => ({
-      // si hay un pedido que Repuestos no ha terminado de entregar, lo nuevo va a ese mismo pedido
-      editar: () => editarOrden(o, recargar), pedir: () => pedirRepuestos(o, recargar, abierta), mano: () => manoDeObra(o, recargar),
-      diag: () => textoLibre('Diagnóstico', 'ept_diagnostico_agregar', o, recargar), nota: () => textoLibre('Nota', 'ept_observacion_agregar', o, recargar),
-      terminar: () => terminar(o, recargar), aprobar: () => revisar(o, true, recargar), devolver: () => revisar(o, false, recargar),
+      editar: () => editarOrden(o, recargar),
+      // si hay un pedido abierto, lo nuevo va a ese mismo pedido
+      pedir: () => pedirRepuestos(o, recargar, abierta),
+      sinRepuestos: () => confirmar('No necesita repuestos', `${ot(o.numero)} pasa directo al Trabajo (paso 6).`, 'ept_orden_sin_repuestos', o, recargar),
+      otraPieza: () => confirmar('Necesito otra pieza', `${ot(o.numero)} vuelve al paso 3 para pedirla. Cuando Repuestos la entregue y el mecánico la reciba, regresa al Trabajo.`, 'ept_orden_otra_pieza', o, recargar),
+      mano: () => manoDeObra(o, recargar),
+      diag: () => textoLibre('Diagnóstico', 'ept_diagnostico_agregar', o, recargar),
+      nota: () => textoLibre('Nota', 'ept_observacion_agregar', o, recargar),
+      siguiente: () => siguiente(o, recargar),
+      aprobar: () => revisar(o, true, recargar), devolver: () => revisar(o, false, recargar),
+      cobro: () => EPT.abrirCobro(o.id),
       cancelar: () => cancelarOrden(o),
     })[b.dataset.acc]()));
     v.querySelectorAll('[data-recibir]').forEach(b => b.addEventListener('click', () => recibir(b.dataset, recargar)));
@@ -286,8 +270,108 @@
     v.querySelectorAll('[data-agregar-sol]').forEach(b => b.addEventListener('click', () => pedirRepuestos(o, recargar, { id: b.dataset.agregarSol, numero: b.dataset.n })));
     v.querySelectorAll('[data-cancelar-sol]').forEach(b => b.addEventListener('click', () => cancelarSolicitud(b.dataset, recargar)));
     window.scrollTo(0, 0);
+    // en el celular la barra de pasos se corre sola hasta el paso actual
+    const barra = v.querySelector('.pasos'), actual = barra && barra.querySelector('.actual');
+    if (actual) barra.scrollLeft += actual.getBoundingClientRect().left - barra.getBoundingClientRect().left - (barra.clientWidth - actual.offsetWidth) / 2;
+    // Paso 4: la entrega de Repuestos se hace aquí mismo, dentro de la orden
+    for (const caja of v.querySelectorAll('[data-entrega]')) await EPT.pintarEntrega(caja, caja.dataset.entrega, recargar);
   }
   EPT.abrirOrden = abrirOrden;
+
+  // Qué se ve y qué se puede hacer en cada paso. Solo quien tiene el permiso de ese paso ve los botones.
+  function contenidoPaso({ o, diags, saldo, mano, reqs, sinRecibir, totalMano, abiertas, meToca }) {
+    const p = o.paso;
+    const boton = (acc, ic, t, cls = '') => `<button type="button" class="${cls}" data-acc="${acc}">${ic ? icono(ic) : ''}${esc(t)}</button>`;
+    const sig = (t = 'Siguiente') => meToca ? `<button type="button" class="accion siguiente" data-acc="siguiente">${esc(t)}${icono('adelante')}</button>` : '';
+    const espera = t => `<p class="espera">${icono('reloj')}<span>${t}</span></p>`;
+    const otro = meToca ? '' : espera(`Esperando a ${esc(QUIEN[p])}.`);
+
+    if (p === 1) return {
+      html: `<p class="guia">Revise que los datos del carro y del cliente estén bien${o.mecanico ? '' : ' y <b>asigne el mecánico</b>'}. Si algo está mal, toque <b>Editar</b> arriba.</p>${otro}`,
+      pie: sig(),
+    };
+    if (p === 2) return {
+      html: `${diags.length ? `<ul class="lista">${diags.map(d => `<li><div class="q"><span>${esc(d.usuario?.nombre || '')} · ${fecha(d.fecha)}</span><div class="texto">${esc(d.texto)}</div></div></li>`).join('')}</ul>`
+        : '<p class="guia">Escriba qué tiene el carro.</p>'}${otro}`,
+      pie: meToca ? `${boton('diag', 'nota', diags.length ? 'Agregar al diagnóstico' : 'Escribir diagnóstico')}${sig()}` : '',
+    };
+    if (p === 3) return {
+      html: abiertas.length ? abiertas.map(s => `<div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')}</span>
+          ${meToca ? `<span class="der botones"><button type="button" class="peque" data-agregar-sol="${s.id}" data-n="${s.numero}">${icono('mas')}Agregar piezas</button>
+            <button type="button" class="liso peque" data-cancelar-sol="${s.id}" data-n="${s.numero}">Cancelar pedido</button></span>` : ''}</div>
+          ${tablaPedido(s, false)}</div>`).join('') + (meToca ? '<p class="guia">Cuando tenga todas las piezas anotadas, toque <b>Siguiente</b> para mandarlas a Repuestos.</p>' : otro)
+        : `<p class="guia">Anote las piezas que necesita el carro. Si no lleva piezas, toque <b>No necesita repuestos</b>.</p>${otro}`,
+      pie: !meToca ? '' : abiertas.length ? sig('Siguiente: mandar a Repuestos')
+        : `${boton('sinRepuestos', '', 'No necesita repuestos', 'liso')}${boton('pedir', 'caja', 'Pedir repuestos', 'accion siguiente')}`,
+    };
+    if (p === 4) {
+      const almacen = s => {
+        const r = [...reqs].reverse().find(q => q.solicitud_id === s.id && ['nueva', 'pendiente', 'aprobada', 'parcial'].includes(q.estado));
+        if (!r) return '';
+        const t = (r.transferencias || []).find(q => q.estado === 'en_transito');
+        return espera(t ? `La mercancía viene de Almacén (T-${t.numero}). Cuando llegue, Repuestos la confirma en <b>Transferencias</b>.`
+          : ['nueva', 'pendiente'].includes(r.estado) ? `Se pidió a Almacén (R-${r.numero}). Esperando que Almacén la apruebe.`
+          : `Almacén aprobó R-${r.numero}. Esperando que la envíe.`);
+      };
+      return {
+        html: abiertas.length ? abiertas.map(s => `${almacen(s)}${meToca ? `<div data-entrega="${s.id}"><div class="vacio">Cargando…</div></div>`
+            : `<div class="sol"><div class="fila"><b>S-${s.numero}</b>${chip(SOL, s.estado)}</div>${tablaPedido(s, true)}</div>`}`).join('') + otro
+          : `<p class="guia">Repuestos ya entregó o cerró todo lo pedido.${meToca ? ' Toque <b>Siguiente</b>.' : ''}</p>${otro}`,
+        pie: sig(),
+      };
+    }
+    if (p === 5) return {
+      html: sinRecibir.length ? `<p class="guia">Confirme cada pieza que recibió el mecánico.</p>
+        <ul class="lista">${sinRecibir.map(l => `<li><div class="q"><b>${num(l.cantidad)} ${esc(l.producto.unidad)} · ${esc(l.producto.descripcion)}</b><span>Entregado ${fecha(l.fecha)}</span></div>
+          ${meToca ? `<button type="button" class="prin" data-recibir="${l.id}" data-cant="${l.cantidad}" data-desc="${esc(l.producto.descripcion)}">Recibí</button>` : ''}</li>`).join('')}</ul>${otro}`
+        : `<p class="guia">Todo lo entregado ya está confirmado.${meToca ? ' Toque <b>Siguiente</b>.' : ''}</p>${otro}`,
+      pie: sig(),
+    };
+    if (p === 6) return {
+      html: `<h3>Piezas que tiene el mecánico</h3>${tablaSaldo(saldo, meToca)}
+        <h3>Servicios y mano de obra${mano.length ? ` <span class="mute">· ${dinero(totalMano)}</span>` : ''}</h3>${listaMano(mano, meToca)}
+        ${meToca ? '<p class="guia">Anote lo que usó o devuelve y la mano de obra. Al final toque <b>Terminé el trabajo</b>.</p>' : otro}`,
+      pie: meToca ? `${EPT.puede('mano_obra.registrar') ? boton('mano', 'llave', 'Servicio / mano de obra') : ''}
+        ${EPT.puede('solicitud.crear') ? boton('otraPieza', 'caja', 'Necesito otra pieza', 'liso') : ''}${sig('Terminé el trabajo')}` : '',
+    };
+    if (p === 7) return {
+      html: `<p class="guia">Revise el trabajo: las piezas usadas y la mano de obra (${dinero(totalMano)}) están en <b>Ver todo el expediente</b>.</p>${otro}`,
+      pie: meToca && o.estado === 'en_revision' ? `${boton('devolver', 'atras', 'Devolver al taller', 'liso')}
+        <button type="button" class="accion siguiente" data-acc="aprobar">Aprobar y enviar a Caja${icono('adelante')}</button>` : '',
+    };
+    // Paso 8: Caja tiene su propia hoja de cobro para esta orden
+    const txt = { en_caja: 'Esperando que Caja registre la factura.', facturada: 'Facturada: falta cobrar o cerrar.', cerrada: 'Orden cerrada. El proceso terminó.' }[o.estado] || '';
+    return {
+      html: o.estado === 'cerrada' ? `<p class="guia txt-ok"><b>${txt}</b></p>` : espera(txt),
+      pie: verCaja() && EPT.abrirCobro ? `<button type="button" class="accion siguiente" data-acc="cobro">${o.estado === 'cerrada' ? 'Ver el cobro' : 'Facturar y cobrar'}${icono('adelante')}</button>` : '',
+    };
+  }
+
+  function tablaPedido(s, conEntregado) {
+    return `<table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th>${conEntregado ? '<th>Entregado</th><th>Recibido</th>' : ''}</tr></thead><tbody>
+      ${s.lineas.map(l => `<tr><td>${esc(l.descripcion)}${l.codigo ? ` <small class="mute">${esc(l.codigo)}</small>` : ''}${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
+        <td>${num(l.cantidad)}</td>${conEntregado ? `<td>${num(l.despachada)}</td><td>${num(l.recibida)}</td>` : ''}</tr>`).join('')}
+    </tbody></table>`;
+  }
+
+  function tablaSaldo(saldo, conBotones) {
+    if (!saldo.length) return '<div class="vacio">No recibió piezas.</div>';
+    return `<div class="desliza"><table class="tabla"><thead><tr><th>Pieza</th><th>Recibió</th><th>Usó</th><th>Devolvió</th><th>Le quedan</th>${conBotones ? '<th></th>' : ''}</tr></thead><tbody>
+      ${saldo.map(p => `<tr><td>${esc(p.descripcion)}</td><td>${num(p.entregado)}</td><td>${num(Number(p.utilizado) + Number(p.danado))}${Number(p.danado) ? ` <small class="mute">(${num(p.danado)} dañ.)</small>` : ''}</td>
+        <td>${num(p.devuelto)}</td><td><b class="${Number(p.en_mano) ? 'txt-aviso' : 'txt-ok'}">${num(p.en_mano)}</b></td>
+        ${conBotones ? `<td><div class="botones">${Number(p.en_mano) > 0 ? `
+          ${EPT.puede('consumo.registrar') ? `<button type="button" class="peque" data-usar="${p.producto_id}" data-max="${p.en_mano}" data-desc="${esc(p.descripcion)}">Usó</button>` : ''}
+          ${EPT.puede('devolucion.registrar') ? `<button type="button" class="peque" data-devolver="${p.producto_id}" data-max="${p.en_mano}" data-desc="${esc(p.descripcion)}">Devolver</button>` : ''}` : ''}</div></td>` : ''}</tr>`).join('')}
+    </tbody></table></div>`;
+  }
+
+  function listaMano(mano, conBotones) {
+    if (!mano.length) return '<div class="vacio">Falta registrar la mano de obra.</div>';
+    return `<ul class="lista">${mano.map(m => `<li class="${m.anulada ? 'anulada' : ''}"><div class="q"><b>${esc(m.descripcion)}</b>
+      <span>${esc(m.mecanico?.nombre || '')}${m.adicional ? ' · adicional' : ''}${m.anulada ? ` · <span class="txt-malo">Anulada: ${esc(m.motivo_anulacion)}</span>` : ''}</span></div>
+      <b class="precio">${dinero(m.importe)}</b>
+      ${!m.anulada && conBotones && EPT.puede('mano_obra.registrar') ? `<button type="button" class="liso peque" data-anular="${m.id}" data-desc="${esc(m.descripcion)}">Anular</button>` : ''}</li>`).join('')}</ul>`;
+  }
 
   function lineaDeTiempo({ o, sols, desp, mano, diags, cons, devs }) {
     const ev = [{ f: o.fecha, t: 'Entrada del vehículo' + (o.motivo ? ': ' + o.motivo : '') }];
@@ -334,67 +418,26 @@
 
   // sol = {id, numero}: agrega a ese mismo pedido en vez de hacer uno nuevo
   async function pedirRepuestos(o, listo, sol) {
-    const [mecs, prods] = await Promise.all([mecanicosActivos(),
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,numero_parte').eq('activo', true).order('descripcion')).then(EPT.alfabetico)]);
-    const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
-    const porCodigo = new Map(prods.map(p => [p.codigo.toLowerCase(), p]));
-    // búsqueda propia (la lista del navegador con miles de piezas se pone lenta): todas las palabras deben aparecer
-    const llano = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')}`));
-    const buscar = q => {
-      const palabras = llano(q).split(/\s+/).filter(Boolean); if (!palabras.length) return [];
-      const r = [];
-      for (let i = 0; i < prods.length && r.length < 12; i++) if (palabras.every(w => textos[i].includes(w))) r.push(prods[i]);
-      return r;
-    };
+    const [mecs, prods] = await Promise.all([mecanicosActivos(), EPT.cargarProductos()]);
+    const bp = EPT.buscadorPiezas(prods);
     const renglon = () => `<div class="renglon">
-        <div class="busca-pieza"><input name="pieza" placeholder="Código o nombre de la pieza" maxlength="120" autocomplete="off"><ul class="sugerencias" hidden></ul></div>
+        ${EPT.campoPieza('name="pieza"')}
         <input name="cant" type="number" min="1" step="any" value="1" inputmode="decimal" aria-label="Cantidad">
         <input name="nota" placeholder="Nota (opcional)" maxlength="120">
         <button type="button" class="liso" data-quitar aria-label="Quitar">✕</button></div>`;
     EPT.ventana({
       titulo: sol ? `Agregar piezas a S-${sol.numero} · ${ot(o.numero)}` : 'Pedir repuestos · ' + ot(o.numero),
-      boton: sol ? 'Agregar al pedido' : 'Enviar a Repuestos',
+      boton: sol ? 'Agregar al pedido' : 'Anotar piezas',
       cuerpo: `
-        ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>, que ya está en Repuestos.</p>`
+        ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>.</p>`
           : `<label class="campo">Mecánico que las pide<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
           <div id="renglones">${renglon()}</div>
           <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>`,
       alAbrir(f) {
         const caja = f.querySelector('#renglones');
-        let espera = null;
-        const lista = inp => inp.parentElement.querySelector('.sugerencias');
-        const cerrar = inp => { const ul = lista(inp); ul.hidden = true; ul.innerHTML = ''; };
-        const elegir = (inp, li) => { inp.value = li.dataset.v; cerrar(inp); inp.closest('.renglon').querySelector('[name=cant]').focus(); };
-        const mostrar = inp => {
-          const ul = lista(inp); const r = buscar(inp.value);
-          ul.innerHTML = r.map((p, i) => `<li data-v="${esc(etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}</li>`).join('')
-            || (inp.value.trim() ? '<li class="nada">No está en el catálogo: se pedirá tal como lo escribió</li>' : '');
-          ul.hidden = !ul.innerHTML;
-        };
-        caja.addEventListener('input', e => {
-          if (e.target.name !== 'pieza') return;
-          clearTimeout(espera); espera = setTimeout(() => mostrar(e.target), 120);
-        });
-        caja.addEventListener('keydown', e => {
-          if (e.target.name !== 'pieza') return;
-          const ul = lista(e.target); if (ul.hidden) return;
-          const items = [...ul.querySelectorAll('li[data-v]')]; const act = ul.querySelector('li.activa'); let i = items.indexOf(act);
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault(); if (!items.length) return;
-            i = (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-            items.forEach(x => x.classList.remove('activa')); items[i].classList.add('activa'); items[i].scrollIntoView({ block: 'nearest' });
-          } else if (e.key === 'Enter') { e.preventDefault(); if (act) elegir(e.target, act); else cerrar(e.target); }
-          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cerrar(e.target); }
-        });
-        // tocar una sugerencia (pointerdown para que el campo no pierda el foco antes)
-        caja.addEventListener('pointerdown', e => {
-          const li = e.target.closest('.sugerencias li[data-v]'); if (!li) return;
-          e.preventDefault(); elegir(li.closest('.busca-pieza').querySelector('input'), li);
-        });
-        caja.addEventListener('focusout', e => { if (e.target.name === 'pieza') setTimeout(() => cerrar(e.target), 150); });
+        // al elegir una pieza, el cursor pasa a la cantidad
+        EPT.sugerencias(caja, prods, { alElegir: inp => inp.closest('.renglon').querySelector('[name=cant]').focus() });
         f.querySelector('#otraPieza').addEventListener('click', () => { caja.insertAdjacentHTML('beforeend', renglon()); caja.lastElementChild.querySelector('input').focus(); });
         caja.addEventListener('click', e => { if (e.target.closest('[data-quitar]') && caja.children.length > 1) e.target.closest('.renglon').remove(); });
       },
@@ -404,7 +447,7 @@
           const texto = r.querySelector('[name=pieza]').value.trim(); const cant = Number(r.querySelector('[name=cant]').value);
           if (!texto) return null;
           if (!(cant > 0)) throw new Error('Revise las cantidades');
-          const p = porEtiqueta.get(texto.toLowerCase()) || porCodigo.get(texto.toLowerCase());
+          const p = bp.deTexto(texto);
           return p ? { producto_id: p.id, cantidad: cant, observaciones: r.querySelector('[name=nota]').value }
             : { descripcion: texto, cantidad: cant, observaciones: r.querySelector('[name=nota]').value };
         }).filter(Boolean);
@@ -414,7 +457,7 @@
           EPT.aviso(`${r.agregadas} pieza${r.agregadas === 1 ? '' : 's'} agregada${r.agregadas === 1 ? '' : 's'} a S-${r.numero}`); listo(); return;
         }
         const r = await EPT.rpc('ept_solicitud_crear', { p_orden: o.id, p_mecanico: f.mecanico.value, p_lineas: lineas });
-        EPT.aviso(`Solicitud S-${r.numero} enviada a Repuestos`); listo();
+        EPT.aviso(`Pedido S-${r.numero} anotado. Toque Siguiente cuando esté completo.`); listo();
       },
     });
   }
@@ -529,14 +572,23 @@
     });
   }
 
-  async function terminar(o, listo) {
-    const r = await EPT.rpc('ept_trabajo_finalizar', { p_orden: o.id }).catch(e => { EPT.aviso(EPT.error(e), true); return null; });
+  // Siguiente: el servidor revisa que el paso esté completo; si falta algo, dice qué
+  async function siguiente(o, listo) {
+    const r = await EPT.rpc('ept_orden_siguiente', { p_orden: o.id }).catch(e => { EPT.aviso(EPT.error(e), true); return null; });
     if (!r) return;
-    if (r.ok) { EPT.aviso('Trabajo terminado. Pasa a revisión del jefe de taller.'); listo(); return; }
+    if (r.ok) { EPT.aviso(`Listo. Sigue el paso ${r.paso}: ${EPT.PASOS[r.paso - 1]}`); listo(); return; }
     EPT.ventana({
       titulo: 'Todavía falta', boton: '',
-      cuerpo: `<p style="margin:0">Antes de terminar ${ot(o.numero)} resuelva esto:</p>
+      cuerpo: `<p style="margin:0">Antes de seguir resuelva esto:</p>
         <ul class="faltan">${r.faltan.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`,
+    });
+  }
+
+  function confirmar(titulo, texto, funcion, o, listo) {
+    EPT.ventana({
+      titulo, boton: 'Sí, seguir',
+      cuerpo: `<p style="margin:0">${esc(texto)}</p>`,
+      async alGuardar() { await EPT.rpc(funcion, { p_orden: o.id }); EPT.aviso('Listo'); listo(); },
     });
   }
 

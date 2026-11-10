@@ -140,7 +140,7 @@
 
   async function abrirTransferencia(id, recien) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
-    const t = await EPT.leer(sb.from('transferencias').select('id,numero,estado,origen,destino,fecha_envio,fecha_recibo,fecha_resuelto,nota_diferencia,envio:usuarios!transferencias_enviado_por_fkey(nombre),recibio:usuarios!transferencias_recibido_por_fkey(nombre),requisicion:requisiciones(id,numero,orden:ordenes(numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(id,enviada,recibida,diferencia_nota,producto:productos(codigo,descripcion,unidad))').eq('id', id).single());
+    const t = await EPT.leer(sb.from('transferencias').select('id,numero,estado,origen,destino,fecha_envio,fecha_recibo,fecha_resuelto,nota_diferencia,envio:usuarios!transferencias_enviado_por_fkey(nombre),recibio:usuarios!transferencias_recibido_por_fkey(nombre),requisicion:requisiciones(id,numero,orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(id,enviada,recibida,diferencia_nota,producto:productos(codigo,descripcion,unidad))').eq('id', id).single());
     const recibir = t.estado === 'en_transito' && EPT.puede('repuestos.recibir');
     const resolver = t.estado === 'con_diferencia' && EPT.puede('almacen.diferencia');
     EPT.$('#titulo').textContent = tn(t.numero);
@@ -181,7 +181,9 @@
       if (ls.some(x => x.recibida < x.env && !x.nota.trim())) { EPT.aviso('Llegó menos de lo enviado: escriba qué pasó', true); return; }
       brc.disabled = true;
       try { const r = await EPT.rpc('ept_transferencia_recibir', { p_trans: t.id, p_lineas: ls });
-        EPT.aviso(r.diferencia ? 'Recibida con diferencia: se avisó a Almacén' : 'Recibida: ya está en la existencia de Repuestos'); listo(); }
+        EPT.aviso(r.diferencia ? 'Recibida con diferencia: se avisó a Almacén' : 'Recibida: ya está en la existencia de Repuestos');
+        // si era para una orden, sigue la entrega en esa orden (paso 4)
+        if (t.requisicion?.orden) EPT.abrirOrden(t.requisicion.orden.id); else listo(); }
       catch (e) { EPT.aviso(EPT.error(e), true); brc.disabled = false; }
     });
     v.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => EPT.ventana({

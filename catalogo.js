@@ -24,7 +24,8 @@
   });
 
   let cache = null;
-  async function cargar() {
+  // se guarda en memoria unos minutos; al guardar una marca, modelo, transmisión o aplicación se vuelve a bajar
+  const cargar = () => EPT.memoria('vehiculos', async () => {
     const [marcas, modelos, trans, apl] = await Promise.all([
       EPT.leer(sb.from('vehiculo_marcas').select('id,nombre,activo').order('nombre')),
       EPT.leerTodo(() => sb.from('vehiculo_modelos').select('id,marca_id,nombre,activo').order('nombre')),
@@ -33,7 +34,7 @@
     ]);
     cache = { marcas, modelos, trans, apl };
     return cache;
-  }
+  }, { cambiaCon: /catalogo|aplicacion|transmision|marca|modelo/ }).then(d => (cache = d));
 
   async function pintar() {
     const d = cache && pestana === cache.pest ? cache : await cargar(); d.pest = pestana;

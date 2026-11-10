@@ -30,8 +30,9 @@
     icono: 'entregar', grupo: 'Repuestos', atajo: 'Pedidos del taller', ver: verRep,
     async mostrar(v) {
       const [sols, devs] = await Promise.all([
-        EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
-          .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha')),
+        EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
+          .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha'))
+          .then(l => l.filter(s => !s.orden || s.orden.paso === 4)),
         EPT.leer(sb.from('devoluciones').select('id,cantidad,fecha,observaciones,producto:productos(codigo,descripcion,unidad),orden:ordenes(numero)').eq('estado', 'pendiente').order('fecha')),
       ]);
       const cuenta = k => sols.filter(s => s.estado === k).length;
@@ -70,65 +71,67 @@
   }
 
   // ---------- Entregar una solicitud ----------
+  // Si el pedido es de una orden, se entrega dentro de la orden (paso 4). Solo los pedidos sin orden se abren aparte.
   async function abrirSolicitud(id) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
-    const [s, prods] = await Promise.all([
-      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,anio,placa)),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
-      EPT.cargarProductos(),
-    ]);
-    const exR = await existenciasDe(s.lineas.map(l => l.producto_id).filter(Boolean));
-    const exA = await existenciasDe(s.lineas.map(l => l.producto_id).filter(Boolean), 'almacen');
-    const abierta = ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado);
+    const s = await EPT.leer(sb.from('solicitudes').select('id,numero,orden_id').eq('id', id).single());
+    if (s.orden_id) return EPT.abrirOrden(s.orden_id);
     EPT.$('#titulo').textContent = 'S-' + s.numero;
-    EPT.$('#subtitulo').textContent = s.orden ? `${ot(s.orden.numero)} · ${[s.orden.vehiculo?.marca, s.orden.vehiculo?.modelo, s.orden.vehiculo?.anio, s.orden.vehiculo?.placa].filter(Boolean).join(' ')}` : 'Sin orden';
+    EPT.$('#subtitulo').textContent = 'Pedido sin orden';
     EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnVolverPed">${icono('atras')}Pedidos</button>`;
     EPT.$('#btnVolverPed').addEventListener('click', () => EPT.ir('pedidos'));
-    const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    v.innerHTML = `
-      <div class="panel"><div class="cuerpo"><div class="fila"><span class="ot-num">S-${s.numero}</span>${chip(s.estado)}
-        ${s.orden ? `<button type="button" class="der" id="verOrden">Ver ${ot(s.orden.numero)}</button>` : ''}</div>
-        <dl class="datos"><div><dt>Mecánico</dt><dd>${esc(s.mecanico?.nombre || '—')}</dd></div>
-          <div><dt>Cliente</dt><dd>${esc(s.orden?.cliente?.nombre || '—')}</dd></div><div><dt>Pedida</dt><dd>${fecha(s.fecha)}</dd></div>
-          ${s.justificacion ? `<div class="ancho"><dt>Justificación</dt><dd>${esc(s.justificacion)}</dd></div>` : ''}</dl></div></div>
-      <div class="panel" style="margin-top:16px"><header><h2>Piezas</h2></header><div class="desliza">
-        <table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Entregado</th><th>Falta</th><th>En Repuestos</th><th>En Almacén</th>${abierta ? '<th>Entregar ahora</th>' : ''}</tr></thead><tbody>
+    v.innerHTML = '<div></div>';
+    await pintarEntrega(v.firstElementChild, id, () => abrirSolicitud(id));
+    window.scrollTo(0, 0);
+  }
+
+  // Pinta un pedido con su tabla para entregar dentro de "caja". listo() vuelve a cargar la pantalla de afuera.
+  async function pintarEntrega(caja, id, listo) {
+    const [s, prods] = await Promise.all([
+      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
+      EPT.cargarProductos(),
+    ]);
+    const ids = s.lineas.map(l => l.producto_id).filter(Boolean);
+    const [exR, exA] = await Promise.all([existenciasDe(ids), existenciasDe(ids, 'almacen')]);
+    const abierta = ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado);
+    caja.innerHTML = `
+      <div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(s.estado)}</div>
+        ${s.justificacion ? `<p class="mute" style="margin:4px 0">Justificación: ${esc(s.justificacion)}</p>` : ''}
+        <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Entregado</th><th>Falta</th><th>En Repuestos</th><th>En Almacén</th>${abierta ? '<th>Entregar ahora</th>' : ''}</tr></thead><tbody>
         ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = exR[l.producto_id] || 0;
           return `<tr data-l="${l.id}" data-falta="${falta}">
             <td>${l.producto_id ? `<b>${esc(l.descripcion)}</b> <small class="mute">${esc(l.codigo)}</small>` :
-              `<b>${esc(l.descripcion)}</b> <span class="estado aviso">sin código</span>${abierta && falta > 0 ? `<br><input class="elige" list="dlProdRep" placeholder="Elija el producto del catálogo">` : ''}`}
+              `<b>${esc(l.descripcion)}</b> <span class="estado aviso">sin código</span>${abierta && falta > 0 ? `<br>${EPT.campoPieza()}` : ''}`}
               ${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
             <td>${num(l.cantidad)}</td><td>${num(l.despachada)}</td><td><b class="${falta ? 'txt-aviso' : 'txt-ok'}">${num(falta)}</b></td>
             <td class="hay">${l.producto_id ? num(hay) : '—'}</td><td class="hayA">${l.producto_id ? num(exA[l.producto_id] || 0) : '—'}</td>
             ${abierta ? `<td>${falta > 0 ? `<input class="cant" type="number" min="0" max="${falta}" step="any" inputmode="decimal" value="${l.producto_id ? Math.min(falta, hay) : 0}">` : ''}</td>` : ''}</tr>`; }).join('')}
         </tbody></table></div>
-        <datalist id="dlProdRep">${prods.map(p => `<option value="${esc(etiqueta(p))}">`).join('')}</datalist>
-        ${abierta ? `<div class="pie-panel">
-          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="prin" id="btnEntregar">${icono('entregar')}Entregar</button>` : ''}
-          ${EPT.puede('repuestos.requisicion') ? `<button type="button" id="btnFaltante">Pedir lo que falta a Almacén</button>` : ''}
-          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="liso peque der" id="btnCerrar">No se entregará el resto…</button>` : ''}</div>` : ''}
+        ${abierta ? `<div class="botones" style="margin-top:10px">
+          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="prin" data-e="entregar">${icono('entregar')}Entregar</button>` : ''}
+          ${EPT.puede('repuestos.requisicion') ? `<button type="button" data-e="faltante">Pedir lo que falta a Almacén</button>` : ''}
+          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="liso peque" data-e="cerrar">No se entregará el resto…</button>` : ''}</div>` : ''}
       </div>`;
-    const ver = EPT.$('#verOrden'); if (ver) ver.addEventListener('click', () => EPT.abrirOrden(s.orden.id));
-    const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
-    const porCodigo = new Map(prods.map(p => [p.codigo.toLowerCase(), p]));
     // al elegir producto para una línea sin código se muestra su existencia
-    v.querySelectorAll('input.elige').forEach(inp => inp.addEventListener('change', async () => {
-      const p = porEtiqueta.get(inp.value.trim().toLowerCase()) || porCodigo.get(inp.value.trim().toLowerCase());
+    const mostrarExistencia = async (inp, p) => {
       const tr = inp.closest('tr');
-      if (!p) { tr.querySelector('.hay').textContent = '—'; return; }
-      const e = await existenciasDe([p.id]); const ea = await existenciasDe([p.id], 'almacen');
+      if (!p) { tr.querySelector('.hay').textContent = '—'; tr.querySelector('.hayA').textContent = '—'; return; }
+      const [e, ea] = await Promise.all([existenciasDe([p.id]), existenciasDe([p.id], 'almacen')]);
       tr.querySelector('.hay').textContent = num(e[p.id] || 0); tr.querySelector('.hayA').textContent = num(ea[p.id] || 0);
       tr.querySelector('.cant').value = Math.min(Number(tr.dataset.falta), e[p.id] || 0);
-    }));
-    const lineaDe = tr => {
-      const l = s.lineas.find(x => x.id === tr.dataset.l); const inp = tr.querySelector('input.elige');
-      let pid = l.producto_id;
-      if (!pid && inp) { const p = porEtiqueta.get(inp.value.trim().toLowerCase()) || porCodigo.get(inp.value.trim().toLowerCase()); pid = p ? p.id : null; }
-      return { l, pid, cant: Number(tr.querySelector('.cant')?.value || 0), falta: Number(tr.dataset.falta), hay: Number(String(tr.querySelector('.hay').textContent).replace(/,/g, '')) || 0 };
     };
-    const filas = () => [...v.querySelectorAll('tr[data-l]')].map(lineaDe);
-    const recargar = () => abrirSolicitud(id);
+    const bp = EPT.sugerencias(caja.querySelector('table.entregar'), prods, { libre: false, alElegir: mostrarExistencia });
+    caja.querySelectorAll('.pz-busca').forEach(inp => inp.addEventListener('change', () => mostrarExistencia(inp, bp.deTexto(inp.value))));
+    const lineaDe = tr => {
+      const l = s.lineas.find(x => x.id === tr.dataset.l); const inp = tr.querySelector('.pz-busca');
+      let pid = l.producto_id;
+      if (!pid && inp) { const p = bp.deTexto(inp.value); pid = p ? p.id : null; }
+      return { l, pid, cant: Number(tr.querySelector('.cant')?.value || 0), falta: Number(tr.dataset.falta) };
+    };
+    const filas = () => [...caja.querySelectorAll('tr[data-l]')].map(lineaDe);
+    const boton = k => caja.querySelector(`[data-e="${k}"]`);
 
-    const be = EPT.$('#btnEntregar');
+    const be = boton('entregar');
     if (be) be.addEventListener('click', async () => {
       const ls = filas().filter(x => x.cant > 0);
       if (!ls.length) { EPT.aviso('Escriba cuánto entrega', true); return; }
@@ -136,10 +139,10 @@
       be.disabled = true;
       try {
         await EPT.rpc('ept_despachar', { p_solicitud: s.id, p_lineas: ls.map(x => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: x.cant })) });
-        EPT.aviso('Entregado. Se avisó al taller.'); recargar();
+        EPT.aviso(s.orden ? 'Entregado. Cuando termine de entregar, toque Siguiente.' : 'Entregado.'); listo();
       } catch (e) { EPT.aviso(EPT.error(e), true); be.disabled = false; }
     });
-    const bf = EPT.$('#btnFaltante');
+    const bf = boton('faltante');
     if (bf) bf.addEventListener('click', () => {
       // lo que falta después de lo que se entrega ahora
       const todas = filas().map(x => ({ ...x, pedir: Math.max(0, x.falta - x.cant) })).filter(x => x.pedir > 0);
@@ -156,47 +159,69 @@
         async alGuardar(f) {
           const r = await EPT.rpc('ept_requisicion_crear', { p_solicitud: s.id, p_motivo: f.motivo.value,
             p_lineas: ls.map((x, i) => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: Number(f['q' + i].value) })) });
-          EPT.aviso(`Requisición R-${r.numero} enviada a Almacén`); recargar();
+          EPT.aviso(`Requisición R-${r.numero} enviada a Almacén`); listo();
         },
       });
     });
-    const bc = EPT.$('#btnCerrar');
+    const bc = boton('cerrar');
     if (bc) bc.addEventListener('click', () => EPT.ventana({
       titulo: 'No se entregará el resto', boton: 'Cerrar lo que falta',
-      cuerpo: `<p style="margin:0">Lo que falta de S-${s.numero} se marca como no entregado y el taller puede seguir.</p>
+      cuerpo: `<p style="margin:0">Lo que falta de S-${s.numero} se marca como no entregado.</p>
         <label class="campo">¿Por qué?<input name="motivo" required maxlength="200" placeholder="Ej. no hay en Almacén; se usará otra pieza"></label>`,
-      async alGuardar(f) { await EPT.rpc('ept_solicitud_cerrar_faltante', { p_solicitud: s.id, p_motivo: f.motivo.value }); EPT.aviso('Cerrado. Se avisó al taller.'); recargar(); },
+      async alGuardar(f) { await EPT.rpc('ept_solicitud_cerrar_faltante', { p_solicitud: s.id, p_motivo: f.motivo.value }); EPT.aviso('Cerrado.'); listo(); },
     }));
-    window.scrollTo(0, 0);
   }
 
   EPT.abrirSolicitud = abrirSolicitud;
+  EPT.pintarEntrega = pintarEntrega;
 
   // ---------- Productos y existencias ----------
+  // Lo pesado (piezas, transmisiones, vehículos, equivalencias) se baja una vez y se guarda en memoria unos minutos;
+  // las existencias se piden siempre frescas porque cambian con cada entrega.
+  const CATALOGO_CAMBIA = /producto|importar|catalogo|equivalencia|aplicacion|transmision|marca|modelo/;
   let datosCat = null;
-  async function cargarCatalogo() {
-    const [prods, tipos, pt, trans, apl, equiv, exist] = await Promise.all([
+  const cargarFijo = () => EPT.memoria('catalogo', async () => {
+    const [prods, tipos, pt, trans, apl, equiv] = await Promise.all([
       EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto').order('descripcion')).then(EPT.alfabetico),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
       EPT.leerTodo(() => sb.from('aplicaciones').select('id,transmision_id,anio_desde,anio_hasta,motor,modelo:vehiculo_modelos(nombre,activo,marca:vehiculo_marcas(nombre,activo))').eq('activo', true)),
       EPT.leerTodo(() => sb.from('equivalencias').select('id,producto_id,marca,numero_parte,clase,fuente,verificado').eq('activo', true)),
-      EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion']),
     ]);
     // solo marcas y modelos que se trabajan
     const aplicaciones = apl.filter(a => a.modelo && a.modelo.activo && a.modelo.marca && a.modelo.marca.activo);
-    const ex = {}; exist.forEach(e => { (ex[e.producto_id] = ex[e.producto_id] || {})[e.ubicacion] = Number(e.cantidad); });
     const transDe = {}; pt.forEach(x => (transDe[x.producto_id] = transDe[x.producto_id] || []).push(x.transmision_id));
     const eqDe = {}; equiv.forEach(e => (eqDe[e.producto_id] = eqDe[e.producto_id] || []).push(e));
     const vehDe = {}; aplicaciones.forEach(a => (vehDe[a.transmision_id] = vehDe[a.transmision_id] || []).push(a));
-    datosCat = { prods, tipos, trans, ex, transDe, eqDe, vehDe };
+    const transPorId = new Map(trans.map(t => [t.id, t])); const tipoPorId = new Map(tipos.map(t => [t.id, t.nombre]));
+    const prodPorId = new Map(prods.map(p => [p.id, p]));
+    // lo que se busca de cada pieza se arma UNA vez (antes se armaba en cada letra y el celular se congelaba)
+    const busca = new Map(); const codigosTrans = new Map(); const vehiculos = new Map();
+    for (const p of prods) {
+      const ts = (transDe[p.id] || []).map(id => transPorId.get(id)).filter(Boolean);
+      const vs = (transDe[p.id] || []).flatMap(t => vehDe[t] || []);
+      codigosTrans.set(p.id, ts.map(x => x.codigo));
+      vehiculos.set(p.id, vs);
+      // el tipo de pieza va en español (las descripciones de los catálogos vienen en inglés): "junta", "banda", "filtro"…
+      busca.set(p.id, EPT.llano([p.codigo, p.descripcion, tipoPorId.get(p.tipo_id), p.marca_pieza, p.numero_parte, p.notas,
+        ...(eqDe[p.id] || []).flatMap(e => [e.marca, e.numero_parte]),
+        ...ts.flatMap(x => [x.codigo, x.otros_nombres, x.fabricante]),
+        ...vs.map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${a.motor}`)].filter(Boolean).join(' ')));
+    }
+    return { prods, tipos, trans, transDe, eqDe, vehDe, transPorId, prodPorId, busca, codigosTrans, vehiculos };
+  }, { cambiaCon: CATALOGO_CAMBIA });
+  async function cargarCatalogo() {
+    const [fijo, exist] = await Promise.all([cargarFijo(),
+      EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion'])]);
+    const ex = {}; exist.forEach(e => { (ex[e.producto_id] = ex[e.producto_id] || {})[e.ubicacion] = Number(e.cantidad); });
+    datosCat = { ...fijo, ex };
     return datosCat;
   }
   const textoVehiculos = (tids, d) => (tids || []).flatMap(t => d.vehDe[t] || [])
     .map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${EPT.anios(a)}`);
 
-  let buscaProd = '', tipoProd = '';
+  let buscaProd = '', tipoProd = '', cuantosProd = 100;
   EPT.pantalla({
     id: 'productos', titulo: 'Productos y existencias', subtitulo: 'Busque por código, nombre, número de parte, transmisión o vehículo',
     icono: 'estante', grupo: 'Repuestos', atajo: 'Productos',
@@ -211,41 +236,40 @@
           <div class="buscador">${icono('buscar')}<input id="bProd" type="search" value="${esc(buscaProd)}" placeholder="Ej. filtro, 35330, U341E, Corolla 2010"></div>
           <select id="fTipo" style="flex:0 1 280px"><option value="">Todos los tipos</option>${d.tipos.map(t => `<option value="${t.id}" ${t.id === tipoProd ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select></div>
         <div class="panel" id="listaProd"></div>`;
-      let t; v.querySelector('#bProd').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { buscaProd = e.target.value; pintarProductos(); }, 250); });
-      v.querySelector('#fTipo').addEventListener('change', e => { tipoProd = e.target.value; pintarProductos(); });
+      let t; v.querySelector('#bProd').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { buscaProd = e.target.value; cuantosProd = 100; pintarProductos(); }, 200); });
+      v.querySelector('#fTipo').addEventListener('change', e => { tipoProd = e.target.value; cuantosProd = 100; pintarProductos(); });
+      // un solo oyente para toda la lista (antes uno por renglón)
+      v.querySelector('#listaProd').addEventListener('click', e => {
+        if (e.target.closest('#masProd')) { cuantosProd += 100; pintarProductos(); return; }
+        const li = e.target.closest('[data-p]'); if (li) fichaProducto(datosCat.prodPorId.get(li.dataset.p));
+      });
       pintarProductos();
     },
   });
 
-  function coincide(p, d, q) {
-    if (!q) return true;
-    const pal = q.toLowerCase().split(/\s+/).filter(Boolean);
-    const trans = (d.transDe[p.id] || []).map(id => d.trans.find(x => x.id === id)).filter(Boolean);
-    const anios = pal.filter(w => /^(19|20)\d{2}$/.test(w)).map(Number);
-    // el tipo de pieza va en español (las descripciones de los catálogos vienen en inglés): "junta", "banda", "filtro"…
-    const tipo = (d.tipos.find(t => t.id === p.tipo_id) || {}).nombre || '';
-    const texto = [p.codigo, p.descripcion, tipo, p.marca_pieza, p.numero_parte, p.notas,
-      ...(d.eqDe[p.id] || []).flatMap(e => [e.marca, e.numero_parte]),
-      ...trans.flatMap(x => [x.codigo, x.otros_nombres, x.fabricante]),
-      ...(d.transDe[p.id] || []).flatMap(t => d.vehDe[t] || []).map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${a.motor}`)].join(' ').toLowerCase();
-    const okPal = pal.filter(w => !/^(19|20)\d{2}$/.test(w)).every(w => texto.includes(w));
-    if (!okPal) return false;
+  function coincide(p, d, pal, anios) {
+    if (pal.length && !pal.every(w => d.busca.get(p.id).includes(w))) return false;
     if (!anios.length) return true;
     // años vacíos = por confirmar (no se puede asegurar); sin "hasta" = hasta hoy
-    return (d.transDe[p.id] || []).flatMap(t => d.vehDe[t] || []).some(a => a.anio_desde != null && anios.every(y => y >= a.anio_desde && y <= (a.anio_hasta ?? 9999)));
+    return d.vehiculos.get(p.id).some(a => a.anio_desde != null && anios.every(y => y >= a.anio_desde && y <= (a.anio_hasta ?? 9999)));
   }
 
   function pintarProductos() {
     const d = datosCat; const caja = EPT.$('#listaProd'); if (!caja || !d) return;
-    const lista = d.prods.filter(p => p.activo && (!tipoProd || p.tipo_id === tipoProd) && coincide(p, d, buscaProd.trim())).slice(0, 300);
+    const todas = EPT.llano(buscaProd.trim()).split(/\s+/).filter(Boolean);
+    const anios = todas.filter(w => /^(19|20)\d{2}$/.test(w)).map(Number);
+    const pal = todas.filter(w => !/^(19|20)\d{2}$/.test(w));
+    // se cuentan todas las que coinciden pero se dibujan de 100 en 100 (dibujar cientos de renglones traba el celular)
+    const halladas = d.prods.filter(p => p.activo && (!tipoProd || p.tipo_id === tipoProd) && coincide(p, d, pal, anios));
+    const lista = halladas.slice(0, cuantosProd);
     caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => {
       const e = d.ex[p.id] || {}; const r = e.repuestos || 0; const bajo = Number(p.minimo) > 0 && r <= Number(p.minimo);
-      const trans = (d.transDe[p.id] || []).map(id => (d.trans.find(x => x.id === id) || {}).codigo).filter(Boolean);
+      const trans = d.codigosTrans.get(p.id) || [];
       return `<li class="toca" data-p="${p.id}">${p.foto ? `<img class="mini" src="${esc(urlFoto(p.foto))}" alt="" loading="lazy">` : ''}<span class="codigo">${esc(p.codigo)}</span>
         <div class="q"><b>${esc(p.descripcion)}</b><span>${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
-        <div class="stock"><span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span></div></li>`; }).join('')}</ul>`
+        <div class="stock"><span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span></div></li>`; }).join('')}</ul>
+      ${halladas.length > lista.length ? `<div class="pie-panel"><span class="mute">Se ven ${num(lista.length)} de ${num(halladas.length)}</span><button type="button" class="peque der" id="masProd">Mostrar 100 más</button></div>` : ''}`
       : `<div class="vacio">${d.prods.length ? 'No se encontró nada con eso.' : 'Todavía no hay productos. Toque "Nuevo producto".'}</div>`;
-    caja.querySelectorAll('[data-p]').forEach(li => li.addEventListener('click', () => fichaProducto(d.prods.find(p => p.id === li.dataset.p))));
   }
 
   // ---------- Foto de la pieza ----------
