@@ -14,10 +14,13 @@
   --r:10px;
   color-scheme:light;
 }
-@media (prefers-color-scheme:dark){:root:not([data-tema="claro"]){
+@media (prefers-color-scheme:dark){:root:not([data-tema="claro"]):not([data-tema="blanco"]){
   --bg:#0f1419;--panel:#171d24;--panel2:#1b222a;--ink:#e8ecf0;--ink2:#c6ced6;--mute:#98a3b0;--line:#29323c;--line2:#38434f;
   --rojo:#ff4f5e;--onrojo:#0c1117;--acento-t:#f2a900;--ok:#3dbd84;--aviso:#ffb020;--malo:#ff7570;--info:#74a8f0;
   --side:#0b1015;--side2:#141b22;--sideline:#222c36;--sombra:0 1px 2px rgba(0,0,0,.35);color-scheme:dark}}
+/* fondo blanco (pedido del dueño 11 nov): igual que el claro pero la pantalla en blanco y textos grises */
+:root[data-tema="blanco"]{--bg:#ffffff;--panel:#fff;--panel2:#f4f6f8;--mute:#55606b;--line:#dde2e7;--line2:#c4ccd4;
+  --sombra:0 1px 3px rgba(16,24,32,.08),0 4px 12px rgba(16,24,32,.05);color-scheme:light}
 :root[data-tema="oscuro"]{
   --bg:#0f1419;--panel:#171d24;--panel2:#1b222a;--ink:#e8ecf0;--ink2:#c6ced6;--mute:#98a3b0;--line:#29323c;--line2:#38434f;
   --rojo:#ff4f5e;--onrojo:#0c1117;--acento-t:#f2a900;--ok:#3dbd84;--aviso:#ffb020;--malo:#ff7570;--info:#74a8f0;
@@ -107,7 +110,10 @@ label.campo{display:grid;gap:6px;font-weight:600;font-size:14px;color:var(--ink2
 .lista li.toca:hover{background:var(--panel2)}
 .lista .q{flex:1 1 auto;min-width:0;display:grid;gap:2px}
 .lista .q b{font-size:15.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lista .q span{font-size:13px;color:var(--mute)}
+.lista .q span{font-size:13px;color:var(--mute);overflow-wrap:anywhere}
+.lista .q>*{min-width:0}
+/* en las ventanas el nombre completo baja de línea en vez de cortarse */
+dialog .lista .q b{white-space:normal;overflow-wrap:anywhere}
 .lista li.apagado .q b{color:var(--mute)}
 
 .estado{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--c,var(--mute));white-space:nowrap}
@@ -126,9 +132,13 @@ label.campo{display:grid;gap:6px;font-weight:600;font-size:14px;color:var(--ink2
 /* ---------- ventana ---------- */
 dialog{border:0;padding:0;border-radius:14px;width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);background:var(--panel);color:var(--ink);box-shadow:0 24px 60px rgba(0,0,0,.35)}
 dialog::backdrop{background:rgba(10,14,18,.55)}
-dialog form{display:grid;gap:16px;padding:20px}
+dialog form{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:20px}
+/* nada dentro de una ventana la ensancha: todo se acomoda al ancho y baja de línea */
+dialog form>*,dialog fieldset{min-width:0}
+dialog{overflow-x:hidden}
+select{max-width:100%;text-overflow:ellipsis}
 dialog .tit{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);margin:-20px -20px 0;padding:16px 20px}
-dialog .tit h2{font-size:18px;flex:1}
+dialog .tit h2{font-size:18px;flex:1;min-width:0;overflow-wrap:anywhere}
 dialog .pie{display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--line);margin:0 -20px -20px;padding:14px 20px}
 dialog .error{color:var(--malo);font-weight:600;margin:0;min-height:1.2em}
 
@@ -159,8 +169,8 @@ button.peque{min-height:36px;padding:0 12px;font-size:14px}
 .seg button{border:0;border-radius:0;min-height:44px}
 .seg button+button{border-left:1px solid var(--line2)}
 .seg button[aria-pressed=true]{background:var(--ink);color:var(--panel)}
-.dos{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.tres-col{display:grid;grid-template-columns:1fr 1fr 90px;gap:12px}
+.dos{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.tres-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 90px;gap:12px}
 .pista{margin:-6px 0 0;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--ok) 12%,var(--panel));color:var(--ok);font-weight:600;font-size:14px}
 input.grande{font-size:24px;font-weight:700;min-height:56px;text-align:center}
 .alerta{display:flex;gap:10px;align-items:flex-start;padding:12px 16px;margin-bottom:14px;border-radius:var(--r);background:color-mix(in srgb,var(--acento) 18%,var(--panel));border:1px solid color-mix(in srgb,var(--acento) 55%,var(--line))}
@@ -314,8 +324,8 @@ label.check input{width:22px;height:22px;min-height:22px;flex:0 0 auto;margin:0;
   #btnMenu{display:inline-flex;padding:0 12px}
   .lista li{padding:12px 14px}
   .perm{flex-wrap:wrap}
-  .dos{grid-template-columns:1fr}
-  .tres-col{grid-template-columns:1fr 1fr}
+  .dos{grid-template-columns:minmax(0,1fr)}
+  .tres-col{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .tres-col label:last-child{grid-column:1/-1}
   .seg{width:100%}.seg button{flex:1;padding:0 8px}
   .tiempo li{grid-template-columns:1fr;gap:2px}
@@ -365,3 +375,11 @@ details.expediente[open]>summary{margin-bottom:16px}
   .pie-paso{justify-content:stretch}
   .pie-paso .accion.siguiente{margin-left:auto}
 }
+
+/* ---------- Piezas usadas ---------- */
+.marca-usada{display:inline-block;padding:2px 7px;border-radius:6px;background:#7a4a12;color:#fff;font:800 11px/1.3 inherit;font-family:inherit;letter-spacing:.06em;vertical-align:middle}
+.renglon.lote{grid-template-columns:minmax(0,1fr) 80px 110px 40px}
+.renglon.lote input[name=precio]{text-align:right}
+.lista.lotes li{align-items:flex-start}
+.lista.lotes .q span{white-space:normal}
+@media (max-width:560px){.renglon.lote{grid-template-columns:minmax(0,1fr) 70px 90px 36px}}

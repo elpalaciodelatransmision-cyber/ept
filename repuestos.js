@@ -92,19 +92,21 @@
       EPT.cargarProductos(),
     ]);
     const ids = s.lineas.map(l => l.producto_id).filter(Boolean);
-    const [exR, exA] = await Promise.all([existenciasDe(ids), existenciasDe(ids, 'almacen')]);
+    const [exR, exA, exU] = await Promise.all([existenciasDe(ids), existenciasDe(ids, 'almacen'), existenciasDe(ids, 'usadas')]);
+    const usada = id => !!(prods.find(x => x.id === id) || {}).usada;
+    const hayPara = id => usada(id) ? exU[id] || 0 : exR[id] || 0;
     const abierta = ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado);
     caja.innerHTML = `
       <div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(s.estado)}</div>
         ${s.justificacion ? `<p class="mute" style="margin:4px 0">Justificación: ${esc(s.justificacion)}</p>` : ''}
-        <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Entregado</th><th>Falta</th><th>En Repuestos</th><th>En Almacén</th>${abierta ? '<th>Entregar ahora</th>' : ''}</tr></thead><tbody>
-        ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = exR[l.producto_id] || 0;
+        <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Entregado</th><th>Falta</th><th>Hay para entregar</th><th>En Almacén</th>${abierta ? '<th>Entregar ahora</th>' : ''}</tr></thead><tbody>
+        ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = hayPara(l.producto_id);
           return `<tr data-l="${l.id}" data-falta="${falta}">
-            <td>${l.producto_id ? `<b>${esc(l.descripcion)}</b> <small class="mute">${esc(l.codigo)}</small>` :
+            <td>${l.producto_id ? `<b>${esc(l.descripcion)}</b> <small class="mute">${esc(l.codigo)}</small>${usada(l.producto_id) ? ' <span class="marca-usada">USADA</span>' : ''}` :
               `<b>${esc(l.descripcion)}</b> <span class="estado aviso">sin código</span>${abierta && falta > 0 ? `<br>${EPT.campoPieza()}` : ''}`}
               ${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
             <td>${num(l.cantidad)}</td><td>${num(l.despachada)}</td><td><b class="${falta ? 'txt-aviso' : 'txt-ok'}">${num(falta)}</b></td>
-            <td class="hay">${l.producto_id ? num(hay) : '—'}</td><td class="hayA">${l.producto_id ? num(exA[l.producto_id] || 0) : '—'}</td>
+            <td class="hay">${l.producto_id ? num(hay) + (usada(l.producto_id) ? ' <small class="mute">usadas</small>' : '') : '—'}</td><td class="hayA">${l.producto_id && !usada(l.producto_id) ? num(exA[l.producto_id] || 0) : '—'}</td>
             ${abierta ? `<td>${falta > 0 ? `<input class="cant" type="number" min="0" max="${falta}" step="any" inputmode="decimal" value="${l.producto_id ? Math.min(falta, hay) : 0}">` : ''}</td>` : ''}</tr>`; }).join('')}
         </tbody></table></div>
         ${abierta ? `<div class="botones" style="margin-top:10px">
@@ -116,8 +118,8 @@
     const mostrarExistencia = async (inp, p) => {
       const tr = inp.closest('tr');
       if (!p) { tr.querySelector('.hay').textContent = '—'; tr.querySelector('.hayA').textContent = '—'; return; }
-      const [e, ea] = await Promise.all([existenciasDe([p.id]), existenciasDe([p.id], 'almacen')]);
-      tr.querySelector('.hay').textContent = num(e[p.id] || 0); tr.querySelector('.hayA').textContent = num(ea[p.id] || 0);
+      const [e, ea] = await Promise.all([existenciasDe([p.id], p.usada ? 'usadas' : 'repuestos'), existenciasDe([p.id], 'almacen')]);
+      tr.querySelector('.hay').textContent = num(e[p.id] || 0); tr.querySelector('.hayA').textContent = p.usada ? '—' : num(ea[p.id] || 0);
       tr.querySelector('.cant').value = Math.min(Number(tr.dataset.falta), e[p.id] || 0);
     };
     const bp = EPT.sugerencias(caja.querySelector('table.entregar'), prods, { libre: false, alElegir: mostrarExistencia });
@@ -147,8 +149,8 @@
       // lo que falta después de lo que se entrega ahora
       const todas = filas().map(x => ({ ...x, pedir: Math.max(0, x.falta - x.cant) })).filter(x => x.pedir > 0);
       if (!todas.length) { EPT.aviso('No falta nada por pedir', true); return; }
-      const ls = todas.filter(x => x.pid), sinProd = todas.filter(x => !x.pid);
-      if (!ls.length) { EPT.aviso(`Elija primero el producto de "${sinProd[0].l.descripcion}"`, true); return; }
+      const ls = todas.filter(x => x.pid && !usada(x.pid)), sinProd = todas.filter(x => !x.pid);
+      if (!ls.length) { EPT.aviso(sinProd.length ? `Elija primero el producto de "${sinProd[0].l.descripcion}"` : 'Las piezas usadas no se piden a Almacén', true); return; }
       EPT.ventana({
         titulo: 'Pedir a Almacén', boton: 'Enviar requisición',
         cuerpo: `${sinProd.length ? `<div class="alerta" style="margin:0">${icono('nota')}<div>Sin producto elegido (no se piden): <b>${sinProd.map(x => esc(x.l.descripcion)).join(', ')}</b>. Elíjalo en la tabla para pedirlo.</div></div>` : ''}
@@ -182,7 +184,7 @@
   let datosCat = null;
   const cargarFijo = () => EPT.memoria('catalogo', async () => {
     const [prods, tipos, pt, trans, apl, equiv] = await Promise.all([
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto').order('descripcion')).then(EPT.alfabetico),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto,usada,producto_base').order('descripcion')).then(EPT.alfabetico),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
@@ -215,7 +217,16 @@
     const [fijo, exist] = await Promise.all([cargarFijo(),
       EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion'])]);
     const ex = {}; exist.forEach(e => { (ex[e.producto_id] = ex[e.producto_id] || {})[e.ubicacion] = Number(e.cantidad); });
-    datosCat = { ...fijo, ex };
+    const nuevas = {}, usadas = {};
+    fijo.prods.forEach(p => {
+      const e = ex[p.id] || {};
+      if (p.usada) { if (p.producto_base) usadas[p.producto_base] = (usadas[p.producto_base] || 0) + (e.usadas || 0); }
+      else nuevas[p.id] = (e.repuestos || 0) + (e.almacen || 0);
+    });
+    // nuevas y usadas de la misma pieza, mire uno u otro producto
+    const cuantas = p => p.usada ? { nuevas: p.producto_base ? nuevas[p.producto_base] || 0 : null, usadas: (ex[p.id] || {}).usadas || 0 }
+      : { nuevas: nuevas[p.id] || 0, usadas: usadas[p.id] || 0 };
+    datosCat = { ...fijo, ex, cuantas };
     return datosCat;
   }
   const textoVehiculos = (tids, d) => (tids || []).flatMap(t => d.vehDe[t] || [])
@@ -267,7 +278,8 @@
       const trans = d.codigosTrans.get(p.id) || [];
       return `<li class="toca" data-p="${p.id}">${p.foto ? `<img class="mini" src="${esc(urlFoto(p.foto))}" alt="" loading="lazy">` : ''}<span class="codigo">${esc(p.codigo)}</span>
         <div class="q"><b>${esc(p.descripcion)}</b><span>${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
-        <div class="stock"><span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span></div></li>`; }).join('')}</ul>
+        <div class="stock">${p.usada ? `<span><b>${num(e.usadas || 0)}</b> Usadas</span>${d.cuantas(p).nuevas != null ? `<span class="mute"><b>${num(d.cuantas(p).nuevas)}</b> Nuevas</span>` : ''}`
+          : `<span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span><span class="mute"><b>${num(d.cuantas(p).usadas)}</b> Usadas</span>`}</div></li>`; }).join('')}</ul>
       ${halladas.length > lista.length ? `<div class="pie-panel"><span class="mute">Se ven ${num(lista.length)} de ${num(halladas.length)}</span><button type="button" class="peque der" id="masProd">Mostrar 100 más</button></div>` : ''}`
       : `<div class="vacio">${d.prods.length ? 'No se encontró nada con eso.' : 'Todavía no hay productos. Toque "Nuevo producto".'}</div>`;
   }
@@ -315,13 +327,14 @@
     const elegidas = new Set(p ? d.transDe[p.id] || [] : []);
     const movs = p ? await EPT.leer(sb.from('movimientos_inventario').select('fecha,ubicacion,cantidad,tipo,nota,usuario:usuarios(nombre)').eq('producto_id', p.id).order('fecha', { ascending: false }).limit(15)) : [];
     const e = p ? d.ex[p.id] || {} : {};
-    const TIPOMOV = { despacho_taller: 'Entregado al taller', devolucion_taller: 'Devuelto por el taller', transferencia_salida: 'Salió a Repuestos', transferencia_llegada: 'Llegó de Almacén', transferencia_diferencia: 'Diferencia de transferencia', ajuste: 'Ajuste', carga_inicial: 'Carga inicial', importacion: 'Importado' };
+    const TIPOMOV = { despacho_taller: 'Entregado al taller', devolucion_taller: 'Devuelto por el taller', transferencia_salida: 'Salió a Repuestos', transferencia_llegada: 'Llegó de Almacén', transferencia_diferencia: 'Diferencia de transferencia', ajuste: 'Ajuste', carga_inicial: 'Carga inicial', importacion: 'Importado', compra_lote: 'Compra de lote' };
     const vehiculos = textoVehiculos([...elegidas], d);
     EPT.ventana({
       titulo: p ? p.codigo + ' · ' + p.descripcion : 'Nuevo producto', boton: puede ? 'Guardar' : '',
       cuerpo: `
         ${p ? fotoPieza(p, d, puede) : ''}
-        ${p ? `<div class="contadores"><span><b>${num(e.repuestos || 0)}</b> en Repuestos</span><span><b>${num(e.almacen || 0)}</b> en Almacén</span><span><b>${num(e.transito || 0)}</b> en camino</span></div>` : ''}
+        ${p ? `<div class="contadores">${p.usada ? `<span class="marca-usada">USADA</span><span><b>${num(e.usadas || 0)}</b> usadas</span>${d.cuantas(p).nuevas != null ? `<span><b>${num(d.cuantas(p).nuevas)}</b> nuevas de esta pieza</span>` : ''}`
+          : `<span><b>${num(e.repuestos || 0)}</b> en Repuestos</span><span><b>${num(e.almacen || 0)}</b> en Almacén</span><span><b>${num(e.transito || 0)}</b> en camino</span><span><b>${num(d.cuantas(p).usadas)}</b> usadas</span>`}</div>` : ''}
         <fieldset ${puede ? '' : 'disabled'} class="limpio">
         <div class="dos"><label class="campo">Código <small class="opc">${p ? '' : '(vacío = SC-…)'}</small><input name="codigo" value="${esc(p ? p.codigo : '')}" maxlength="40" autocapitalize="characters"></label>
           <label class="campo">Tipo de pieza<select name="tipo"><option value="">—</option>${d.tipos.map(t => `<option value="${t.id}" ${p && p.tipo_id === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select></label></div>
@@ -343,7 +356,7 @@
             ${puede ? `<button type="button" class="liso peque" data-quitar-eq="${x.id}">Quitar</button>` : ''}</li>`).join('')}</ul>` : '<p class="mute" style="margin:0;font-weight:400">Sin equivalencias.</p>'}
           ${puede ? `<button type="button" class="peque" id="btnEq" style="margin-top:6px;justify-self:start">${icono('mas')}Equivalencia</button>` : ''}</div>
           <div class="fila">${EPT.puede('inventario.ajustar') ? `<button type="button" class="peque" id="btnAjuste">Ajustar existencia…</button>` : ''}</div>
-          ${movs.length ? `<div class="campo">Últimos movimientos<ul class="lista">${movs.map(m => `<li style="padding:6px 0;min-height:0"><div class="q"><b>${esc(TIPOMOV[m.tipo] || m.tipo)} · ${m.ubicacion === 'almacen' ? 'Almacén' : m.ubicacion === 'transito' ? 'En camino' : 'Repuestos'}</b>
+          ${movs.length ? `<div class="campo">Últimos movimientos<ul class="lista">${movs.map(m => `<li style="padding:6px 0;min-height:0"><div class="q"><b>${esc(TIPOMOV[m.tipo] || m.tipo)} · ${{ almacen: 'Almacén', transito: 'En camino', usadas: 'Piezas usadas' }[m.ubicacion] || 'Repuestos'}</b>
             <span>${fecha(m.fecha)} · ${esc(m.usuario?.nombre || '')}${m.nota ? ' · ' + esc(m.nota) : ''}</span></div><b class="${Number(m.cantidad) < 0 ? 'txt-malo' : 'txt-ok'}">${Number(m.cantidad) > 0 ? '+' : ''}${num(m.cantidad)}</b></li>`).join('')}</ul></div>` : ''}` : ''}`,
       alAbrir(f, dlg) {
         const fa = f.querySelector('#fotoArchivo');
@@ -386,7 +399,7 @@
     EPT.ventana({
       titulo: 'Ajustar ' + p.codigo, boton: 'Guardar ajuste',
       cuerpo: `<p class="mute" style="margin:0">Sume o reste. Queda en el historial con su motivo; no se borra.</p>
-        <div class="dos"><label class="campo">Dónde<select name="ub"><option value="repuestos">Repuestos</option><option value="almacen">Almacén</option></select></label>
+        <div class="dos"><label class="campo">Dónde<select name="ub">${p.usada ? '<option value="usadas">Piezas usadas</option>' : '<option value="repuestos">Repuestos</option><option value="almacen">Almacén</option>'}</select></label>
           <label class="campo">Cantidad <small class="opc">(+ suma, − resta)</small><input name="cant" type="number" step="any" required class="grande"></label></div>
         <label class="campo">Motivo<input name="motivo" required maxlength="200" placeholder="Ej. conteo físico"></label>
         <label class="check"><input type="checkbox" name="inicial"><span>Es la carga inicial (lo que había al empezar)</span></label>`,

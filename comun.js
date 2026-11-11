@@ -13,6 +13,8 @@
 
   const ICONOS = {
     inicio: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>',
+    sol: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    luna: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     adelante: '<path d="M5 12h13M13 6l6 6-6 6"/>',
     reloj: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     usuarios: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.8 3.1 2.5 3.5 5.2"/>',
@@ -109,14 +111,14 @@
     const n = i + 1, hecho = todoHecho || n < paso;
     return `<li class="${hecho ? 'hecho' : n === paso ? 'actual' : ''}"${n === paso && !todoHecho ? ' aria-current="step"' : ''}><span class="n">${hecho ? '✓' : n}</span><span class="t">${esc(t)}</span></li>`;
   }).join('')}</ol>`;
-  const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia/;
+  const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia|lote/;
   EPT.cargarProductos = () => EPT.memoria('productos', () => EPT.leerTodo(() => sb.from('productos')
-    .select('id,codigo,descripcion,unidad,numero_parte').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
+    .select('id,codigo,descripcion,unidad,numero_parte,precio,usada').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
   // buscador ya preparado (el texto de cada pieza se arma una sola vez, no en cada letra)
   EPT.buscadorPiezas = prods => {
     if (prods._buscador) return prods._buscador;
     const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${String(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')}`));
+    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${String(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')}${p.usada ? ' usada' : ''}`));
     const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
     const porCodigo = new Map(prods.map(p => [String(p.codigo).toLowerCase(), p]));
     const b = {
@@ -144,7 +146,7 @@
     const elegir = (inp, li) => { inp.value = li.dataset.v; cerrar(inp); if (alElegir) alElegir(inp, bp.deTexto(inp.value)); };
     const mostrar = inp => {
       const ul = lista(inp); const r = bp.buscar(inp.value);
-      ul.innerHTML = r.map((p, i) => `<li data-v="${esc(bp.etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}</li>`).join('')
+      ul.innerHTML = r.map((p, i) => `<li data-v="${esc(bp.etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}${p.usada ? ' <span class="marca-usada">USADA</span>' : ''}</li>`).join('')
         || (inp.value.trim() ? `<li class="nada">${libre ? 'No está en el catálogo: se pedirá tal como lo escribió' : 'No se encontró. Pruebe con el código o otra palabra.'}</li>` : '');
       ul.hidden = !ul.innerHTML;
     };
@@ -278,6 +280,18 @@
       } finally { b.disabled = false; }
     });
     $('#btnSalir').addEventListener('click', async () => { await sb.auth.signOut(); EPT.yo = null; mostrarEntrada(); });
+    // Fondo de la pantalla: mamey (claro) → blanco → oscuro. El botón dice a cuál se pasa; se recuerda en este aparato
+    const TEMAS = { claro: 'blanco', blanco: 'oscuro', oscuro: 'claro' };
+    const NOMBRE = { claro: ['sol', 'Fondo mamey'], blanco: ['sol', 'Fondo blanco'], oscuro: ['luna', 'Modo oscuro'] };
+    const temaActual = () => document.documentElement.dataset.tema || (matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro');
+    const pintarTema = () => { const [ic, t] = NOMBRE[TEMAS[temaActual()]]; $('#btnTema').innerHTML = `${icono(ic)}${t}`; };
+    $('#btnTema').addEventListener('click', () => {
+      const t = TEMAS[temaActual()];
+      document.documentElement.dataset.tema = t;
+      try { localStorage.setItem('ept-tema', t); } catch (_) { }
+      pintarTema();
+    });
+    pintarTema();
     $('#btnMenu').addEventListener('click', () => document.body.classList.toggle('menu-abierto'));
     document.addEventListener('click', e => {
       if (document.body.classList.contains('menu-abierto') && !e.target.closest('#side,#btnMenu')) document.body.classList.remove('menu-abierto');

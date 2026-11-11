@@ -9,6 +9,7 @@
 <link rel="icon" href="icono-192.png">
 <link rel="apple-touch-icon" href="icono-192.png">
 <link rel="stylesheet" href="estilos.css">
+<script>try { var t = localStorage.getItem('ept-tema'); if (t === 'claro' || t === 'blanco' || t === 'oscuro') document.documentElement.dataset.tema = t; } catch (e) {}</script>
 <script src="lib/supabase-2.45.4.js"></script>
 <script src="lib/xlsx-0.18.5.min.js" defer></script>
 </head>
@@ -43,6 +44,7 @@
     <nav class="side-nav" id="menu" aria-label="Menú"></nav>
     <div class="side-foot">
       <div class="yo"><b id="yoNombre"></b><span id="yoDep"></span></div>
+      <button type="button" id="btnTema"></button>
       <button type="button" id="btnSalir">Salir</button>
     </div>
   </aside>
@@ -63,6 +65,7 @@
 <script src="taller.js"></script>
 <script src="servicios.js"></script>
 <script src="repuestos.js"></script>
+<script src="usadas.js"></script>
 <script src="catalogo.js"></script>
 <script src="almacen.js"></script>
 <script src="caja.js"></script>
