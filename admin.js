@@ -133,7 +133,7 @@
 
   // ---------- Mecánicos ----------
   EPT.pantalla({
-    id: 'mecanicos', titulo: 'Mecánicos', subtitulo: 'La lista que se usa al pedir y entregar piezas',
+    id: 'mecanicos', titulo: 'Mecánicos', subtitulo: 'La lista que se usa al pedir y despachar piezas',
     icono: 'mecanicos', grupo: 'Administración', atajo: 'Mecánicos',
     ver: () => EPT.puede('mecanicos.gestionar'),
     async mostrar(v) {

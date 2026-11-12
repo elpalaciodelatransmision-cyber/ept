@@ -1,6 +1,6 @@
 // EPT CONTROL OPERATIVO · permite instalar la app y abrirla rápido.
 // Solo guarda los archivos del programa; los datos SIEMPRE vienen del servidor (nunca se guardan aquí).
-const VERSION = 'ept-2026-11-12-2';
+const VERSION = 'ept-2026-11-12-5';
 const ARCHIVOS = ['./', './index.html', './estilos.css', './comun.js', './taller.js', './servicios.js', './repuestos.js', './usadas.js',
   './catalogo.js', './almacen.js', './caja.js', './reportes.js', './integracion.js', './admin.js', './lib/supabase-2.45.4.js', './lib/xlsx-0.18.5.min.js', './manifest.json', './icono-192.png', './icono-512.png'];
 

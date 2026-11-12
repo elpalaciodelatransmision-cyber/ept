@@ -105,16 +105,61 @@
   const llano = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   EPT.llano = llano;
 
-  // Los 7 pasos de una orden (el servidor guarda en cuál va cada una: ordenes.paso).
+  // Los 8 pasos de una orden (el servidor guarda en cuál va cada una: ordenes.paso).
   // El mecánico no usa el programa: todo lo lleva Repuestos, y Caja cobra al final.
-  EPT.PASOS = ['Entrada', 'Diagnóstico', 'Pedir repuestos', 'Repuestos entrega', 'Trabajo', 'Cierre del expediente', 'Caja'];
+  EPT.PASOS = ['Entrada', 'Diagnóstico', 'Pedir repuestos', 'Repuestos despacha', 'Trabajo', 'Cierre del expediente', 'Caja', 'Entrega del vehículo'];
   EPT.barraPasos = (paso, todoHecho) => `<ol class="pasos" aria-label="Pasos de la orden">${EPT.PASOS.map((t, i) => {
     const n = i + 1, hecho = todoHecho || n < paso;
     return `<li class="${hecho ? 'hecho' : n === paso ? 'actual' : ''}"${n === paso && !todoHecho ? ' aria-current="step"' : ''}><span class="n">${hecho ? '✓' : n}</span><span class="t">${esc(t)}</span></li>`;
   }).join('')}</ol>`;
-  const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia|lote/;
+  const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia|lote|almacen_articulo/;
   EPT.cargarProductos = () => EPT.memoria('productos', () => EPT.leerTodo(() => sb.from('productos')
     .select('id,codigo,descripcion,unidad,numero_parte,precio,usada').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
+
+  // ---------- Familias y subfamilias del inventario (las usan el Almacén y Productos) ----------
+  EPT.cargarFamilias = () => EPT.memoria('familias', async () => {
+    const [fams, subs] = await Promise.all([
+      EPT.leer(sb.from('familias').select('id,nombre,orden').eq('activo', true).order('orden')),
+      EPT.leer(sb.from('subfamilias').select('id,familia_id,nombre,orden').eq('activo', true).order('orden'))]);
+    const porSub = new Map(subs.map(s => [s.id, { ...s, familia: fams.find(f => f.id === s.familia_id) }]));
+    return { fams, subs, porSub, subsDe: fid => subs.filter(s => s.familia_id === fid),
+      nombre: sid => { const s = porSub.get(sid); return s ? s.familia.nombre + ' · ' + s.nombre : ''; } };
+  }, { cambiaCon: /familia/ });
+  // Las dos listas (familia → subfamilia) de un formulario; EPT.enlazarFamilias las conecta
+  EPT.selectFamilias = (F, subId) => {
+    const sel = subId ? F.porSub.get(subId) : null;
+    const opF = F.fams.map(f => `<option value="${f.id}" ${sel && sel.familia_id === f.id ? 'selected' : ''}>${esc(f.nombre)}</option>`).join('');
+    const opS = sel ? F.subsDe(sel.familia_id).map(s => `<option value="${s.id}" ${s.id === subId ? 'selected' : ''}>${esc(s.nombre)}</option>`).join('')
+      : '<option value="">Elija primero la familia</option>';
+    return `<label class="campo">Familia<select name="familia"><option value="">Elija…</option>${opF}</select></label>
+      <label class="campo">Subfamilia<select name="subfamilia">${opS}</select></label>`;
+  };
+  EPT.enlazarFamilias = (F, raiz, alCambiar) => {
+    const fam = raiz.querySelector('select[name=familia]'), sub = raiz.querySelector('select[name=subfamilia]');
+    fam.addEventListener('change', () => {
+      sub.innerHTML = fam.value ? F.subsDe(fam.value).map(s => `<option value="${s.id}">${esc(s.nombre)}</option>`).join('')
+        : '<option value="">Elija primero la familia</option>';
+      if (alCambiar) alCambiar(fam.value, sub.value);
+    });
+    sub.addEventListener('change', () => { if (alCambiar) alCambiar(fam.value, sub.value); });
+  };
+  // "Se cobra / No se cobra": dos botones; el valor queda en un campo escondido name="cobrable" ('1', '0' o '' sin elegir).
+  // REGLA DEL DUEÑO: si no se elige ninguno, SE COBRA. Use EPT.seCobra(f) para leerlo.
+  EPT.botonesCobro = (cobra, { etiqueta = 'Al cliente' } = {}) => `<div class="campo">${esc(etiqueta)}
+      <div class="seg cobro" role="group" aria-label="${esc(etiqueta)}"><button type="button" data-cob="1" aria-pressed="${cobra === true}">Se cobra</button><button type="button" data-cob="0" aria-pressed="${cobra === false}">No se cobra</button></div>
+      <input type="hidden" name="cobrable" value="${cobra === true ? '1' : cobra === false ? '0' : ''}"><small class="opc">Si no elige, se cobra.</small></div>`;
+  EPT.seCobra = f => f.cobrable.value !== '0';
+  // alCambiar(true|false) se llama al tocar; si devuelve una promesa que falla, los botones vuelven como estaban
+  EPT.enlazarCobro = (raiz, alCambiar) => {
+    const h = raiz.querySelector('input[name=cobrable]'), bs = [...raiz.querySelectorAll('.seg.cobro [data-cob]')];
+    const pintar = v => { h.value = v === null ? '' : v ? '1' : '0'; bs.forEach(b => b.setAttribute('aria-pressed', v !== null && (b.dataset.cob === '1') === v)); };
+    bs.forEach(b => b.addEventListener('click', async () => {
+      const antes = h.value === '' ? null : h.value === '1', v = b.dataset.cob === '1'; if (v === antes) return;
+      pintar(v);
+      try { if (alCambiar) await alCambiar(v); } catch (e) { pintar(antes); EPT.aviso(EPT.error(e), true); }
+    }));
+    return { poner: pintar };
+  };
   // buscador ya preparado (el texto de cada pieza se arma una sola vez, no en cada letra)
   EPT.buscadorPiezas = prods => {
     if (prods._buscador) return prods._buscador;
@@ -191,7 +236,7 @@
       <div class="tit"><h2>${esc(titulo)}</h2><button type="button" class="liso" data-cerrar aria-label="Cerrar">✕</button></div>
       ${cuerpo}
       <p class="error" role="alert"></p>
-      <div class="pie"><button type="button" data-cerrar>Cancelar</button>${boton ? `<button class="prin" type="submit">${esc(boton)}</button>` : ''}</div>
+      <div class="pie"><button type="button" data-cerrar>${boton ? 'Cancelar' : 'Cerrar'}</button>${boton ? `<button class="prin" type="submit">${esc(boton)}</button>` : ''}</div>
     </form>`;
     document.body.append(d);
     const f = d.querySelector('form');

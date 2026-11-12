@@ -40,7 +40,7 @@
       const ind = [
         ['Órdenes abiertas', abiertas, 'ordenes', ''], ['Vehículos en reparación', reparacion, 'ordenes', 'en_reparacion'], ['Esperando piezas', esperando, 'ordenes', 'esperando_piezas', esperando ? 'aviso' : ''],
         ['Pedidos pendientes en Repuestos', solPend, 'pedidos', '', solPend ? 'aviso' : ''], ['Requisiciones pendientes de Almacén', reqPend, 'requisiciones', '', reqPend ? 'aviso' : ''],
-        ['Transferencias en camino', transito, 'transferencias', ''], ['Terminadas pendientes de Caja', porCaja, 'caja', '', porCaja ? 'aviso' : ''],
+        ['Despachos del Almacén en camino', transito, 'transferencias', ''], ['Terminadas pendientes de Caja', porCaja, 'caja', '', porCaja ? 'aviso' : ''],
         ['Facturas pendientes de pago', porCobrar, 'caja', '', porCobrar ? 'aviso' : ''], ['Órdenes cerradas en el período', cerradas, '', 'cerrada'],
         ['Diferencias reportadas', difTaller + difTrans, 'transferencias', '', difTaller + difTrans ? 'malo' : ''], ['Devoluciones pendientes', devPend, 'pedidos', '', devPend ? 'aviso' : ''],
         ['Autorizaciones esperando', autPend, 'autorizaciones', '', autPend ? 'aviso' : ''],
@@ -101,23 +101,23 @@
     salidas: { t: 'Salidas de Repuestos al taller', cols: ['Fecha', 'Orden', 'Pieza', 'Código', 'Cantidad', 'Mecánico', 'Despachó'],
       async filas(d, h) { return (await EPT.leer(sb.from('despacho_lineas').select('cantidad,producto:productos(codigo,descripcion),despacho:despachos!inner(fecha,orden:ordenes(numero),mecanico:mecanicos(nombre),usuario:usuarios(nombre))').gte('despacho.fecha', d).lte('despacho.fecha', h)))
         .sort((a, b) => a.despacho.fecha.localeCompare(b.despacho.fecha)).map(l => [fecha(l.despacho.fecha), l.despacho.orden ? ot(l.despacho.orden.numero) : '', l.producto.descripcion, l.producto.codigo, Number(l.cantidad), l.despacho.mecanico?.nombre || '', l.despacho.usuario?.nombre || '']); } },
-    transferencias: { t: 'Transferencias de Almacén', cols: ['Transferencia', 'Requisición', 'Salió', 'Llegó', 'Pieza', 'Enviado', 'Recibido', 'Estado'],
+    transferencias: { t: 'Despachos del Almacén a Repuestos', cols: ['Despacho', 'Requisición', 'Despachado el', 'Ingresó el', 'Pieza', 'Cantidad despachada', 'Cantidad ingresada', 'Estado'],
       async filas(d, h) { return (await EPT.leer(sb.from('transferencia_lineas').select('enviada,recibida,producto:productos(descripcion),t:transferencias!inner(numero,estado,fecha_envio,fecha_recibo,requisicion:requisiciones(numero))').gte('t.fecha_envio', d).lte('t.fecha_envio', h)))
-        .map(l => ['T-' + l.t.numero, l.t.requisicion ? 'R-' + l.t.requisicion.numero : '', fecha(l.t.fecha_envio), fecha(l.t.fecha_recibo), l.producto.descripcion, Number(l.enviada), l.recibida == null ? '' : Number(l.recibida), l.t.estado.replace(/_/g, ' ')]); } },
-    mas_pedidos: { t: 'Productos más solicitados', cols: ['Pieza', 'Código', 'Veces pedida', 'Cantidad pedida', 'Cantidad entregada'],
+        .map(l => ['D-' + l.t.numero, l.t.requisicion ? 'R-' + l.t.requisicion.numero : '', fecha(l.t.fecha_envio), fecha(l.t.fecha_recibo), l.producto.descripcion, Number(l.enviada), l.recibida == null ? '' : Number(l.recibida), (({ en_transito: 'en camino', recibida: 'ingresado' })[l.t.estado] || l.t.estado.replace(/_/g, ' '))]); } },
+    mas_pedidos: { t: 'Productos más solicitados', cols: ['Pieza', 'Código', 'Veces pedida', 'Cantidad pedida', 'Cantidad despachada'],
       async filas(d, h) { const fs = await EPT.leer(sb.from('solicitud_lineas').select('cantidad,despachada,descripcion,codigo,s:solicitudes!inner(fecha)').gte('s.fecha', d).lte('s.fecha', h));
         const g = {}; fs.forEach(l => { const k = l.descripcion + '|' + l.codigo; const x = g[k] || (g[k] = [0, 0, 0]); x[0]++; x[1] += Number(l.cantidad); x[2] += Number(l.despachada); });
         return Object.entries(g).sort((a, b) => b[1][1] - a[1][1]).map(([k, x]) => [...k.split('|'), ...x]); } },
     devoluciones: { t: 'Devoluciones', cols: ['Fecha', 'Orden', 'Pieza', 'Cantidad', 'Estado', '¿Volvió al estante?', 'Nota'],
       async filas(d, h) { return (await EPT.leer(sb.from('devoluciones').select('fecha,cantidad,estado,apta,observaciones,producto:productos(descripcion),orden:ordenes(numero)').gte('fecha', d).lte('fecha', h).order('fecha')))
         .map(x => [dia(x.fecha), ot(x.orden.numero), x.producto.descripcion, Number(x.cantidad), x.estado, x.apta == null ? '' : x.apta ? 'Sí' : 'No', x.observaciones]); } },
-    diferencias: { t: 'Diferencias', cols: ['Fecha', 'Dónde', 'Documento', 'Pieza', 'Esperado', 'Llegó', 'Qué pasó'],
+    diferencias: { t: 'Diferencias', cols: ['Fecha', 'Dónde', 'Documento', 'Pieza', 'Esperado', 'Ingresó', 'Qué pasó'],
       async filas(d, h) {
         const [rt, tl] = await Promise.all([
           EPT.leer(sb.from('recepciones_taller').select('fecha,cantidad_recibida,nota,linea:despacho_lineas(cantidad,producto:productos(descripcion),despacho:despachos(orden:ordenes(numero)))').neq('nota', '').gte('fecha', d).lte('fecha', h)),
           EPT.leer(sb.from('transferencia_lineas').select('enviada,recibida,diferencia_nota,producto:productos(descripcion),t:transferencias!inner(numero,fecha_recibo,nota_diferencia)').neq('diferencia_nota', '').gte('t.fecha_recibo', d).lte('t.fecha_recibo', h))]);
         return [...rt.map(r => [dia(r.fecha), 'Taller', r.linea.despacho.orden ? ot(r.linea.despacho.orden.numero) : '', r.linea.producto.descripcion, Number(r.linea.cantidad), Number(r.cantidad_recibida), r.nota]),
-          ...tl.map(l => [dia(l.t.fecha_recibo), 'Transferencia', 'T-' + l.t.numero, l.producto.descripcion, Number(l.enviada), Number(l.recibida), l.diferencia_nota + (l.t.nota_diferencia ? ' → ' + l.t.nota_diferencia : '')])]; } },
+          ...tl.map(l => [dia(l.t.fecha_recibo), 'Despacho del Almacén', 'D-' + l.t.numero, l.producto.descripcion, Number(l.enviada), Number(l.recibida), l.diferencia_nota + (l.t.nota_diferencia ? ' → ' + l.t.nota_diferencia : '')])]; } },
     tiempo_req: { t: 'Tiempo de atención de requisiciones', cols: ['Requisición', 'Pedida', 'Resuelta', 'Horas para resolver', 'Estado'],
       async filas(d, h) { return (await EPT.leer(sb.from('requisiciones').select('numero,fecha,resuelto,estado').gte('fecha', d).lte('fecha', h).order('numero')))
         .map(r => ['R-' + r.numero, fecha(r.fecha), fecha(r.resuelto), r.resuelto ? Math.round((new Date(r.resuelto) - new Date(r.fecha)) / 36e5 * 10) / 10 : '', r.estado.replace(/_/g, ' ')]); } },
@@ -179,8 +179,8 @@
 
   // ---------- Auditoría ----------
   const A = { desde: haceDias(7), hasta: hoy(), tabla: '', usuario: '' };
-  const TABLAS = { ordenes: 'Órdenes', solicitudes: 'Pedidos del taller', despachos: 'Entregas', recepciones_taller: 'Recibido por el mecánico', consumos: 'Piezas usadas',
-    devoluciones: 'Devoluciones', mano_obra: 'Mano de obra', requisiciones: 'Requisiciones', transferencias: 'Transferencias', existencias: 'Existencias',
+  const TABLAS = { ordenes: 'Órdenes', solicitudes: 'Pedidos del taller', despachos: 'Despachos al taller', recepciones_taller: 'Recibido por el mecánico', consumos: 'Piezas usadas',
+    devoluciones: 'Devoluciones', mano_obra: 'Mano de obra', requisiciones: 'Requisiciones', transferencias: 'Despachos del Almacén', existencias: 'Existencias',
     movimientos_inventario: 'Movimientos de inventario', ajustes_inventario: 'Ajustes', facturas: 'Facturas', pagos: 'Pagos', autorizaciones: 'Autorizaciones',
     productos: 'Productos', servicios: 'Servicios', usuarios: 'Usuarios', usuario_permisos: 'Permisos', mecanicos: 'Mecánicos', config: 'Configuración' };
   EPT.pantalla({

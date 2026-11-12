@@ -12,7 +12,7 @@
   const ot = n => 'OT-' + String(n).padStart(5, '0');
   const fecha = f => f ? new Date(f).toLocaleString('es-DO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
   const FAC = { pendiente_pago: ['Pendiente de pago', 'aviso'], pago_parcial: ['Pago parcial', 'aviso'], pagada: ['Pagada', 'ok'], cerrada: ['Cerrada', 'ok'], anulada: ['Anulada', 'malo'] };
-  const FORMAS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', cheque: 'Cheque', credito: 'Crédito', otro: 'Otro' };
+  const FORMAS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia bancaria', cheque: 'Cheque', credito: 'Crédito', otro: 'Otro' };
   const chip = (m, k) => { const [t, c] = m[k] || [k, '']; return `<span class="estado ${c}">${esc(t)}</span>`; };
   const verCaja = () => ['caja.facturar', 'caja.pago', 'caja.cerrar', 'caja.cargo', 'caja.observar'].some(p => EPT.puede(p));
 
@@ -53,7 +53,7 @@
   async function abrirCobro(id) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
     const [o, facturas, auts] = await Promise.all([
-      EPT.leer(sb.from('ordenes').select('id,numero,estado,kilometraje,motivo,nota_estado,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)').eq('id', id).single()),
+      EPT.leer(sb.from('ordenes').select('id,numero,estado,entregada_en,kilometraje,motivo,nota_estado,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)').eq('id', id).single()),
       EPT.leer(sb.from('facturas').select('id,numero_externo,estado,subtotal,descuento,cargos,impuesto,total,pagado,detalle,fecha_factura,observacion,usuario:usuarios(nombre),pagos(id,forma,importe,referencia,fecha,usuario:usuarios(nombre))').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('autorizaciones').select('id,tipo,detalle,importe,estado,nota_respuesta,fecha,pide:usuarios!autorizaciones_pedido_por_fkey(nombre)').eq('orden_id', id).in('tipo', ['cargo_adicional', 'descuento']).order('fecha')),
     ]);
@@ -79,7 +79,7 @@
     if (o.estado === 'facturada' && EPT.puede('caja.cerrar') && (saldo === 0 || EPT.puede('autorizar'))) acciones.push(['cerrar', 'ok', 'Cerrar orden']);
     const filaTotal = (t, val, cls = '') => `<div class="${cls}"><span>${t}</span><b>${val}</b></div>`;
     v.innerHTML = `
-      <div class="no-imprimir">${EPT.barraPasos(EPT.PASOS.length, o.estado === 'cerrada')}</div>
+      <div class="no-imprimir">${EPT.barraPasos(o.estado === 'cerrada' ? 8 : 7, !!o.entregada_en)}</div>
       ${pend.length ? `<div class="alerta">${icono('nota')}<div><b>Esperando autorización:</b> ${pend.map(a => `${a.tipo === 'descuento' ? 'descuento' : 'cargo'} ${dinero(a.importe)} (${esc(a.detalle)})`).join(', ')}. No se puede facturar hasta que Administración responda.</div></div>` : ''}
       <div class="panel comprobante"><div class="cuerpo">
         <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>${f ? 'Expediente de cobro · factura de referencia ' + esc(f.numero_externo) : 'Orden de pago · páguese en Caja'} · no es comprobante fiscal</span></div></div>
@@ -91,6 +91,7 @@
       <div class="desliza"><table class="tabla"><thead><tr><th>Piezas usadas</th><th>Cantidad</th><th>Precio</th><th>Importe</th></tr></thead><tbody>
         ${c.piezas.length ? c.piezas.map(p => `<tr><td>${esc(p.descripcion)} <small class="mute">${esc(p.codigo)}</small>${Number(p.danada) ? `<br><small class="mute">${num(p.danada)} dañada(s): no se cobra</small>` : ''}</td>
           <td>${num(p.cantidad)} ${esc(p.unidad)}</td><td>${dinero(p.precio)}</td><td>${dinero(p.importe)}</td></tr>`).join('') : '<tr><td colspan="4" class="mute">No se usaron piezas.</td></tr>'}
+        ${(c.no_cobrables || []).length ? `<tr><td colspan="4" class="mute"><b>Usado sin cobrar:</b> ${c.no_cobrables.map(p => `${num(p.cantidad)} ${esc(p.unidad)} ${esc(p.descripcion)}`).join(' · ')}</td></tr>` : ''}
       </tbody><thead><tr><th>Servicios y mano de obra</th><th></th><th></th><th></th></tr></thead><tbody>
         ${c.mano_obra.map(m => `<tr><td>${esc(m.descripcion)}${m.adicional ? ' <small class="mute">(adicional)</small>' : ''}<br><small class="mute">${esc(m.mecanico || '')}</small></td><td></td><td></td><td>${dinero(m.importe)}</td></tr>`).join('')}
       </tbody>${c.cargos.length || c.descuentos.length ? `<thead><tr><th>Cargos y descuentos autorizados</th><th></th><th></th><th></th></tr></thead><tbody>
@@ -129,7 +130,7 @@
         cuerpo: `<p style="margin:0">Saldo: <b>${dinero(saldo)}</b></p>
           <div class="dos"><label class="campo">Forma de pago<select name="forma">${Object.entries(FORMAS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></label>
             <label class="campo">Importe recibido RD$<input name="imp" type="number" min="0.01" step="any" value="${saldo}" class="grande" required></label></div>
-          <label class="campo" id="cRef">Referencia <small class="opc">(aprobación, número de transferencia o cheque)</small><input name="ref" maxlength="60"></label>`,
+          <label class="campo" id="cRef">Referencia <small class="opc">(aprobación, número de transferencia bancaria o cheque)</small><input name="ref" maxlength="60"></label>`,
         async alGuardar(fm) { const r = await EPT.rpc('ept_pago_registrar', { p_factura: f.id, p_forma: fm.forma.value, p_importe: Number(fm.imp.value), p_referencia: fm.ref.value });
           EPT.aviso(Number(r.saldo) > 0 ? `Pago registrado. Queda ${dinero(r.saldo)}` : 'Pagada completa'); listo(); } }),
       cerrar: () => EPT.ventana({ titulo: 'Cerrar ' + ot(o.numero), boton: 'Cerrar orden',

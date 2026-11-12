@@ -14,7 +14,7 @@
   const dinero = n => 'RD$ ' + Number(n || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const ot = n => 'OT-' + String(n).padStart(5, '0');
   const fecha = f => new Date(f).toLocaleString('es-DO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-  const SOL = { pendiente: ['Nueva', 'aviso'], parcial: ['Entregada en parte', 'aviso'], pendiente_almacen: ['Esperando Almacén', 'info'], despachada: ['Entregada', 'ok'], cancelada: ['Cancelada', 'malo'] };
+  const SOL = { pendiente: ['Nueva', 'aviso'], parcial: ['Despachada en parte', 'aviso'], pendiente_almacen: ['Esperando al Almacén', 'info'], despachada: ['Despachada', 'ok'], cancelada: ['Cancelada', 'malo'] };
   const chip = k => { const [t, c] = SOL[k] || [k, '']; return `<span class="estado ${c}">${esc(t)}</span>`; };
   const verRep = () => ['repuestos.despachar', 'repuestos.requisicion', 'repuestos.devolucion'].some(p => EPT.puede(p));
 
@@ -38,21 +38,21 @@
       const cuenta = k => sols.filter(s => s.estado === k).length;
       v.innerHTML = `
         <div class="contadores">
-          <span><b>${cuenta('pendiente')}</b> nuevas</span><span><b>${cuenta('parcial')}</b> entregadas en parte</span>
-          <span><b>${cuenta('pendiente_almacen')}</b> esperando Almacén</span><span><b>${devs.length}</b> devoluciones</span></div>
-        <div class="panel"><header><h2>Por entregar</h2></header>
+          <span><b>${cuenta('pendiente')}</b> nuevas</span><span><b>${cuenta('parcial')}</b> despachadas en parte</span>
+          <span><b>${cuenta('pendiente_almacen')}</b> esperando al Almacén</span><span><b>${devs.length}</b> devoluciones</span></div>
+        <div class="panel"><header><h2>Por despachar</h2></header>
           ${sols.length ? `<ul class="lista">${sols.map(s => `<li class="toca" data-sol="${s.id}">
             <div class="q"><b>S-${s.numero} · ${s.orden ? ot(s.orden.numero) + ' · ' + esc([s.orden.vehiculo?.marca, s.orden.vehiculo?.modelo, s.orden.vehiculo?.placa].filter(Boolean).join(' ')) : 'Sin orden'}</b>
               <span>${esc(s.mecanico?.nombre || '')} · ${s.lineas.length} pieza${s.lineas.length === 1 ? '' : 's'} · ${fecha(s.fecha)}</span></div>${chip(s.estado)}</li>`).join('')}</ul>`
             : '<div class="vacio">No hay pedidos pendientes. 👍</div>'}
         </div>
-        ${EPT.puede('repuestos.devolucion') ? `<div class="panel" style="margin-top:16px"><header><h2>Devoluciones por recibir</h2></header>
+        ${EPT.puede('repuestos.devolucion') ? `<div class="panel" style="margin-top:16px"><header><h2>Devoluciones por ingresar</h2></header>
           ${devs.length ? `<ul class="lista">${devs.map(d => `<li>
             <div class="q"><b>${num(d.cantidad)} ${esc(d.producto.unidad)} · ${esc(d.producto.descripcion)}</b>
               <span>${ot(d.orden.numero)} · ${fecha(d.fecha)}${d.observaciones ? ' · ' + esc(d.observaciones) : ''}</span></div>
             <div class="fila"><button type="button" class="prin peque" data-dev="${d.id}" data-apta="1">Sirve: al estante</button>
               <button type="button" class="peque" data-dev="${d.id}" data-apta="0">No sirve</button></div></li>`).join('')}</ul>`
-            : '<div class="vacio">No hay devoluciones por recibir.</div>'}</div>` : ''}`;
+            : '<div class="vacio">No hay devoluciones por ingresar.</div>'}</div>` : ''}`;
       v.querySelectorAll('[data-sol]').forEach(li => li.addEventListener('click', () => abrirSolicitud(li.dataset.sol)));
       v.querySelectorAll('[data-dev]').forEach(b => b.addEventListener('click', () => recibirDevolucion(b.dataset.dev, b.dataset.apta === '1', devs.find(d => d.id === b.dataset.dev))));
     },
@@ -60,12 +60,12 @@
 
   function recibirDevolucion(id, apta, d) {
     EPT.ventana({
-      titulo: apta ? 'Vuelve al estante' : 'No sirve', boton: apta ? 'Recibir y sumar' : 'Recibir sin sumar',
+      titulo: apta ? 'Vuelve al estante' : 'No sirve', boton: apta ? 'Ingresar y sumar' : 'Ingresar sin sumar',
       cuerpo: `<p style="margin:0"><b>${num(d.cantidad)} ${esc(d.producto.descripcion)}</b> de ${ot(d.orden.numero)}</p>
         ${apta ? '<p class="mute" style="margin:0">Se suma a la existencia de Repuestos.</p>' : '<label class="campo">¿Por qué no sirve?<input name="nota" required maxlength="200"></label>'}`,
       async alGuardar(f) {
         await EPT.rpc('ept_devolucion_recibir', { p_devolucion: id, p_apta: apta, p_nota: apta ? '' : f.nota.value });
-        EPT.aviso(apta ? 'Devolución recibida: sumada al estante' : 'Devolución recibida'); EPT.recargar();
+        EPT.aviso(apta ? 'Ingreso registrado: sumada al estante' : 'Ingreso de la devolución registrado (no se suma)'); EPT.recargar();
       },
     });
   }
@@ -99,7 +99,7 @@
     caja.innerHTML = `
       <div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(s.estado)}</div>
         ${s.justificacion ? `<p class="mute" style="margin:4px 0">Justificación: ${esc(s.justificacion)}</p>` : ''}
-        <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Entregado</th><th>Falta</th><th>Hay para entregar</th><th>En Almacén</th>${abierta ? '<th>Entregar ahora</th>' : ''}</tr></thead><tbody>
+        <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Despachado</th><th>Falta</th><th>Hay para despachar</th><th>En el Almacén</th>${abierta ? '<th>Despachar ahora</th>' : ''}</tr></thead><tbody>
         ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = hayPara(l.producto_id);
           return `<tr data-l="${l.id}" data-falta="${falta}">
             <td>${l.producto_id ? `<b>${esc(l.descripcion)}</b> <small class="mute">${esc(l.codigo)}</small>${usada(l.producto_id) ? ' <span class="marca-usada">USADA</span>' : ''}` :
@@ -110,9 +110,9 @@
             ${abierta ? `<td>${falta > 0 ? `<input class="cant" type="number" min="0" max="${falta}" step="any" inputmode="decimal" value="${l.producto_id ? Math.min(falta, hay) : 0}">` : ''}</td>` : ''}</tr>`; }).join('')}
         </tbody></table></div>
         ${abierta ? `<div class="botones" style="margin-top:10px">
-          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="prin" data-e="entregar">${icono('entregar')}Entregar</button>` : ''}
-          ${EPT.puede('repuestos.requisicion') ? `<button type="button" data-e="faltante">Pedir lo que falta a Almacén</button>` : ''}
-          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="liso peque" data-e="cerrar">No se entregará el resto…</button>` : ''}</div>` : ''}
+          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="prin" data-e="entregar">${icono('entregar')}Despachar</button>` : ''}
+          ${EPT.puede('repuestos.requisicion') ? `<button type="button" data-e="faltante">Pedir lo que falta al Almacén</button>` : ''}
+          ${EPT.puede('repuestos.despachar') ? `<button type="button" class="liso peque" data-e="cerrar">No se despachará el resto…</button>` : ''}</div>` : ''}
       </div>`;
     // al elegir producto para una línea sin código se muestra su existencia
     const mostrarExistencia = async (inp, p) => {
@@ -136,12 +136,12 @@
     const be = boton('entregar');
     if (be) be.addEventListener('click', async () => {
       const ls = filas().filter(x => x.cant > 0);
-      if (!ls.length) { EPT.aviso('Escriba cuánto entrega', true); return; }
+      if (!ls.length) { EPT.aviso('Escriba cuánto despacha', true); return; }
       const sinProd = ls.find(x => !x.pid); if (sinProd) { EPT.aviso(`Elija el producto de "${sinProd.l.descripcion}"`, true); return; }
       be.disabled = true;
       try {
         await EPT.rpc('ept_despachar', { p_solicitud: s.id, p_lineas: ls.map(x => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: x.cant })) });
-        EPT.aviso(s.orden ? 'Entregado. Cuando termine de entregar, toque Siguiente.' : 'Entregado.'); listo();
+        EPT.aviso(s.orden ? 'Despachado. Cuando termine de despachar, toque Siguiente.' : 'Despachado.'); listo();
       } catch (e) { EPT.aviso(EPT.error(e), true); be.disabled = false; }
     });
     const bf = boton('faltante');
@@ -150,9 +150,9 @@
       const todas = filas().map(x => ({ ...x, pedir: Math.max(0, x.falta - x.cant) })).filter(x => x.pedir > 0);
       if (!todas.length) { EPT.aviso('No falta nada por pedir', true); return; }
       const ls = todas.filter(x => x.pid && !usada(x.pid)), sinProd = todas.filter(x => !x.pid);
-      if (!ls.length) { EPT.aviso(sinProd.length ? `Elija primero el producto de "${sinProd[0].l.descripcion}"` : 'Las piezas usadas no se piden a Almacén', true); return; }
+      if (!ls.length) { EPT.aviso(sinProd.length ? `Elija primero el producto de "${sinProd[0].l.descripcion}"` : 'Las piezas usadas no se piden al Almacén', true); return; }
       EPT.ventana({
-        titulo: 'Pedir a Almacén', boton: 'Enviar requisición',
+        titulo: 'Pedir al Almacén', boton: 'Hacer requisición',
         cuerpo: `${sinProd.length ? `<div class="alerta" style="margin:0">${icono('nota')}<div>Sin producto elegido (no se piden): <b>${sinProd.map(x => esc(x.l.descripcion)).join(', ')}</b>. Elíjalo en la tabla para pedirlo.</div></div>` : ''}
           <p class="mute" style="margin:0">Lo que no alcanza en Repuestos:</p>
           <ul class="lista">${ls.map((x, i) => `<li style="padding:8px 0;min-height:0"><div class="q"><b>${esc(x.l.descripcion)}</b></div>
@@ -161,15 +161,15 @@
         async alGuardar(f) {
           const r = await EPT.rpc('ept_requisicion_crear', { p_solicitud: s.id, p_motivo: f.motivo.value,
             p_lineas: ls.map((x, i) => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: Number(f['q' + i].value) })) });
-          EPT.aviso(`Requisición R-${r.numero} enviada a Almacén`); listo();
+          EPT.aviso(`Requisición R-${r.numero} hecha al Almacén`); listo();
         },
       });
     });
     const bc = boton('cerrar');
     if (bc) bc.addEventListener('click', () => EPT.ventana({
-      titulo: 'No se entregará el resto', boton: 'Cerrar lo que falta',
-      cuerpo: `<p style="margin:0">Lo que falta de S-${s.numero} se marca como no entregado.</p>
-        <label class="campo">¿Por qué?<input name="motivo" required maxlength="200" placeholder="Ej. no hay en Almacén; se usará otra pieza"></label>`,
+      titulo: 'No se despachará el resto', boton: 'Cerrar lo que falta',
+      cuerpo: `<p style="margin:0">Lo que falta de S-${s.numero} se marca como no despachado.</p>
+        <label class="campo">¿Por qué?<input name="motivo" required maxlength="200" placeholder="Ej. no hay en el Almacén; se usará otra pieza"></label>`,
       async alGuardar(f) { await EPT.rpc('ept_solicitud_cerrar_faltante', { p_solicitud: s.id, p_motivo: f.motivo.value }); EPT.aviso('Cerrado.'); listo(); },
     }));
   }
@@ -184,7 +184,7 @@
   let datosCat = null;
   const cargarFijo = () => EPT.memoria('catalogo', async () => {
     const [prods, tipos, pt, trans, apl, equiv] = await Promise.all([
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto,usada,producto_base').order('descripcion')).then(EPT.alfabetico),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,subfamilia_id,cobrable,en_almacen,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto,usada,producto_base').order('descripcion')).then(EPT.alfabetico),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
@@ -214,8 +214,8 @@
     return { prods, tipos, trans, transDe, eqDe, vehDe, transPorId, prodPorId, busca, codigosTrans, vehiculos };
   }, { cambiaCon: CATALOGO_CAMBIA });
   async function cargarCatalogo() {
-    const [fijo, exist] = await Promise.all([cargarFijo(),
-      EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion'])]);
+    const [fijo, exist, F] = await Promise.all([cargarFijo(),
+      EPT.leerTodo(() => sb.from('existencias').select('producto_id,ubicacion,cantidad'), ['producto_id', 'ubicacion']), EPT.cargarFamilias()]);
     const ex = {}; exist.forEach(e => { (ex[e.producto_id] = ex[e.producto_id] || {})[e.ubicacion] = Number(e.cantidad); });
     const nuevas = {}, usadas = {};
     fijo.prods.forEach(p => {
@@ -226,13 +226,13 @@
     // nuevas y usadas de la misma pieza, mire uno u otro producto
     const cuantas = p => p.usada ? { nuevas: p.producto_base ? nuevas[p.producto_base] || 0 : null, usadas: (ex[p.id] || {}).usadas || 0 }
       : { nuevas: nuevas[p.id] || 0, usadas: usadas[p.id] || 0 };
-    datosCat = { ...fijo, ex, cuantas };
+    datosCat = { ...fijo, ex, cuantas, F };
     return datosCat;
   }
   const textoVehiculos = (tids, d) => (tids || []).flatMap(t => d.vehDe[t] || [])
     .map(a => `${a.modelo.marca.nombre} ${a.modelo.nombre} ${EPT.anios(a)}`);
 
-  let buscaProd = '', tipoProd = '', cuantosProd = 100;
+  let buscaProd = '', famProd = '', subProd = '', cuantosProd = 100;
   EPT.pantalla({
     id: 'productos', titulo: 'Productos y existencias', subtitulo: 'Busque por código, nombre, número de parte, transmisión o vehículo',
     icono: 'estante', grupo: 'Repuestos', atajo: 'Productos',
@@ -245,10 +245,12 @@
       const d = await cargarCatalogo();
       v.innerHTML = `<div class="fila" style="margin-bottom:14px">
           <div class="buscador">${icono('buscar')}<input id="bProd" type="search" value="${esc(buscaProd)}" placeholder="Ej. filtro, 35330, U341E, Corolla 2010"></div>
-          <select id="fTipo" style="flex:0 1 280px"><option value="">Todos los tipos</option>${d.tipos.map(t => `<option value="${t.id}" ${t.id === tipoProd ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select></div>
+          <select id="fFamP" style="flex:0 1 260px" aria-label="Familia"><option value="">Todas las familias</option>${d.F.fams.map(f => `<option value="${f.id}" ${f.id === famProd ? 'selected' : ''}>${esc(f.nombre)}</option>`).join('')}</select>
+          <select id="fSubP" style="flex:0 1 240px" aria-label="Subfamilia" ${famProd ? '' : 'disabled'}><option value="">Todas las subfamilias</option>${famProd ? d.F.subsDe(famProd).map(x => `<option value="${x.id}" ${x.id === subProd ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('') : ''}</select></div>
         <div class="panel" id="listaProd"></div>`;
       let t; v.querySelector('#bProd').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { buscaProd = e.target.value; cuantosProd = 100; pintarProductos(); }, 200); });
-      v.querySelector('#fTipo').addEventListener('change', e => { tipoProd = e.target.value; cuantosProd = 100; pintarProductos(); });
+      v.querySelector('#fFamP').addEventListener('change', e => { famProd = e.target.value; subProd = ''; cuantosProd = 100; EPT.recargar(); });
+      v.querySelector('#fSubP').addEventListener('change', e => { subProd = e.target.value; cuantosProd = 100; pintarProductos(); });
       // un solo oyente para toda la lista (antes uno por renglón)
       v.querySelector('#listaProd').addEventListener('click', e => {
         if (e.target.closest('#masProd')) { cuantosProd += 100; pintarProductos(); return; }
@@ -271,13 +273,13 @@
     const anios = todas.filter(w => /^(19|20)\d{2}$/.test(w)).map(Number);
     const pal = todas.filter(w => !/^(19|20)\d{2}$/.test(w));
     // se cuentan todas las que coinciden pero se dibujan de 100 en 100 (dibujar cientos de renglones traba el celular)
-    const halladas = d.prods.filter(p => p.activo && (!tipoProd || p.tipo_id === tipoProd) && coincide(p, d, pal, anios));
+    const halladas = d.prods.filter(p => p.activo && (!famProd || d.F.porSub.get(p.subfamilia_id)?.familia_id === famProd) && (!subProd || p.subfamilia_id === subProd) && coincide(p, d, pal, anios));
     const lista = halladas.slice(0, cuantosProd);
     caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => {
       const e = d.ex[p.id] || {}; const r = e.repuestos || 0; const bajo = Number(p.minimo) > 0 && r <= Number(p.minimo);
       const trans = d.codigosTrans.get(p.id) || [];
       return `<li class="toca" data-p="${p.id}">${p.foto ? `<img class="mini" src="${esc(urlFoto(p.foto))}" alt="" loading="lazy">` : ''}<span class="codigo">${esc(p.codigo)}</span>
-        <div class="q"><b>${esc(p.descripcion)}</b><span>${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
+        <div class="q"><b>${esc(p.descripcion)}</b><span>${esc(d.F.porSub.get(p.subfamilia_id)?.nombre || '')}${p.marca_pieza || p.numero_parte ? ' · ' : ''}${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
         <div class="stock">${p.usada ? `<span><b>${num(e.usadas || 0)}</b> Usadas</span>${d.cuantas(p).nuevas != null ? `<span class="mute"><b>${num(d.cuantas(p).nuevas)}</b> Nuevas</span>` : ''}`
           : `<span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span><span class="mute"><b>${num(d.cuantas(p).usadas)}</b> Usadas</span>`}</div></li>`; }).join('')}</ul>
       ${halladas.length > lista.length ? `<div class="pie-panel"><span class="mute">Se ven ${num(lista.length)} de ${num(halladas.length)}</span><button type="button" class="peque der" id="masProd">Mostrar 100 más</button></div>` : ''}`
@@ -327,18 +329,20 @@
     const elegidas = new Set(p ? d.transDe[p.id] || [] : []);
     const movs = p ? await EPT.leer(sb.from('movimientos_inventario').select('fecha,ubicacion,cantidad,tipo,nota,usuario:usuarios(nombre)').eq('producto_id', p.id).order('fecha', { ascending: false }).limit(15)) : [];
     const e = p ? d.ex[p.id] || {} : {};
-    const TIPOMOV = { despacho_taller: 'Entregado al taller', devolucion_taller: 'Devuelto por el taller', transferencia_salida: 'Salió a Repuestos', transferencia_llegada: 'Llegó de Almacén', transferencia_diferencia: 'Diferencia de transferencia', ajuste: 'Ajuste', carga_inicial: 'Carga inicial', importacion: 'Importado', compra_lote: 'Compra de lote' };
+    const TIPOMOV = { despacho_taller: 'Despachado al taller', devolucion_taller: 'Ingreso por devolución del taller', transferencia_salida: 'Despacho del Almacén a Repuestos', transferencia_llegada: 'Ingreso del despacho del Almacén', transferencia_diferencia: 'Diferencia de despacho', ajuste: 'Ajuste', carga_inicial: 'Carga inicial', importacion: 'Importado', compra_lote: 'Ingreso de lote de usadas', ingreso_almacen: 'Ingreso al Almacén', despacho_persona: 'Despacho a una persona' };
     const vehiculos = textoVehiculos([...elegidas], d);
     EPT.ventana({
       titulo: p ? p.codigo + ' · ' + p.descripcion : 'Nuevo producto', boton: puede ? 'Guardar' : '',
       cuerpo: `
         ${p ? fotoPieza(p, d, puede) : ''}
         ${p ? `<div class="contadores">${p.usada ? `<span class="marca-usada">USADA</span><span><b>${num(e.usadas || 0)}</b> usadas</span>${d.cuantas(p).nuevas != null ? `<span><b>${num(d.cuantas(p).nuevas)}</b> nuevas de esta pieza</span>` : ''}`
-          : `<span><b>${num(e.repuestos || 0)}</b> en Repuestos</span><span><b>${num(e.almacen || 0)}</b> en Almacén</span><span><b>${num(e.transito || 0)}</b> en camino</span><span><b>${num(d.cuantas(p).usadas)}</b> usadas</span>`}</div>` : ''}
+          : `<span><b>${num(e.repuestos || 0)}</b> en Repuestos</span><span><b>${num(e.almacen || 0)}</b> en el Almacén</span><span><b>${num(e.transito || 0)}</b> en camino</span><span><b>${num(d.cuantas(p).usadas)}</b> usadas</span>`}</div>` : ''}
         <fieldset ${puede ? '' : 'disabled'} class="limpio">
         <div class="dos"><label class="campo">Código <small class="opc">${p ? '' : '(vacío = SC-…)'}</small><input name="codigo" value="${esc(p ? p.codigo : '')}" maxlength="40" autocapitalize="characters"></label>
           <label class="campo">Tipo de pieza<select name="tipo"><option value="">—</option>${d.tipos.map(t => `<option value="${t.id}" ${p && p.tipo_id === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select></label></div>
         <label class="campo">Nombre de la pieza<input name="desc" value="${esc(p ? p.descripcion : '')}" required maxlength="160"></label>
+        <div class="dos">${EPT.selectFamilias(d.F, p ? p.subfamilia_id : '')}</div>
+        ${EPT.botonesCobro(p ? p.cobrable : null, { etiqueta: 'Cuando se usa en una orden' })}
         <div class="dos"><label class="campo">Marca de la pieza<input name="marca" value="${esc(p ? p.marca_pieza : '')}" maxlength="60" placeholder="Aisin, Transtar, Raybestos…"></label>
           <label class="campo">Número de parte<input name="np" value="${esc(p ? p.numero_parte : '')}" maxlength="60"></label></div>
         <div class="tres-col"><label class="campo">Unidad<input name="unidad" value="${esc(p ? p.unidad : 'UNID')}" maxlength="12"></label>
@@ -359,6 +363,8 @@
           ${movs.length ? `<div class="campo">Últimos movimientos<ul class="lista">${movs.map(m => `<li style="padding:6px 0;min-height:0"><div class="q"><b>${esc(TIPOMOV[m.tipo] || m.tipo)} · ${{ almacen: 'Almacén', transito: 'En camino', usadas: 'Piezas usadas' }[m.ubicacion] || 'Repuestos'}</b>
             <span>${fecha(m.fecha)} · ${esc(m.usuario?.nombre || '')}${m.nota ? ' · ' + esc(m.nota) : ''}</span></div><b class="${Number(m.cantidad) < 0 ? 'txt-malo' : 'txt-ok'}">${Number(m.cantidad) > 0 ? '+' : ''}${num(m.cantidad)}</b></li>`).join('')}</ul></div>` : ''}` : ''}`,
       alAbrir(f, dlg) {
+        EPT.enlazarFamilias(datosCat.F, f);
+        EPT.enlazarCobro(f);
         const fa = f.querySelector('#fotoArchivo');
         if (fa) fa.addEventListener('change', () => subirFoto(p, fa.files[0], dlg));
         f.querySelector('#bTrans').addEventListener('input', ev => { const q = ev.target.value.trim().toLowerCase();
@@ -372,6 +378,12 @@
       async alGuardar(f) {
         const r = await EPT.rpc('ept_producto_guardar', { p_id: p ? p.id : null, p: { codigo: f.codigo.value, descripcion: f.desc.value, unidad: f.unidad.value,
           precio: Number(f.precio.value || 0), tipo_id: f.tipo.value, marca_pieza: f.marca.value, numero_parte: f.np.value, notas: f.notas.value, minimo: Number(f.minimo.value || 0) } });
+        // familia y si se cobra (si no eligió subfamilia, queda la que le toca por su tipo; sin elegir cobro = se cobra)
+        const cobra = EPT.seCobra(f);
+        if (f.subfamilia.value ? (!p || f.subfamilia.value !== p.subfamilia_id || cobra !== p.cobrable) : (p ? cobra !== p.cobrable : !cobra)) {
+          const sub = f.subfamilia.value || (await EPT.leer(sb.from('productos').select('subfamilia_id').eq('id', r.id).single())).subfamilia_id;
+          await EPT.rpc('ept_producto_clasificar', { p_producto: r.id, p_subfamilia: sub, p_cobrable: cobra });
+        }
         const marcadas = [...f.querySelectorAll('#lTrans input:checked')].map(x => x.value);
         if (p || marcadas.length) await EPT.rpc('ept_producto_transmisiones', { p_producto: r.id, p_transmisiones: marcadas, p_fuente: '' });
         EPT.aviso(p ? 'Producto guardado' : `Producto creado: ${r.codigo}`); EPT.recargar();
@@ -399,7 +411,7 @@
     EPT.ventana({
       titulo: 'Ajustar ' + p.codigo, boton: 'Guardar ajuste',
       cuerpo: `<p class="mute" style="margin:0">Sume o reste. Queda en el historial con su motivo; no se borra.</p>
-        <div class="dos"><label class="campo">Dónde<select name="ub">${p.usada ? '<option value="usadas">Piezas usadas</option>' : '<option value="repuestos">Repuestos</option><option value="almacen">Almacén</option>'}</select></label>
+        <div class="dos"><label class="campo">Dónde<select name="ub">${p.usada ? '<option value="usadas">Piezas usadas</option>' : '<option value="repuestos">Repuestos</option>' + (EPT.puede('almacen.ajustar') ? '<option value="almacen">Almacén</option>' : '')}</select></label>
           <label class="campo">Cantidad <small class="opc">(+ suma, − resta)</small><input name="cant" type="number" step="any" required class="grande"></label></div>
         <label class="campo">Motivo<input name="motivo" required maxlength="200" placeholder="Ej. conteo físico"></label>
         <label class="check"><input type="checkbox" name="inicial"><span>Es la carga inicial (lo que había al empezar)</span></label>`,

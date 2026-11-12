@@ -19,8 +19,8 @@
     terminada: ['Terminada', 'ok'], en_revision: ['Por cerrar', 'aviso'], en_caja: ['En Caja', 'ok'],
     facturada: ['Facturada', 'ok'], cerrada: ['Cerrada', ''], cancelada: ['Cancelada', 'malo'],
   };
-  const SOL = { pendiente: ['Pendiente', 'aviso'], parcial: ['Entregada en parte', 'aviso'], despachada: ['Entregada', 'ok'],
-    pendiente_almacen: ['Esperando Almacén', 'info'], cancelada: ['Cancelada', 'malo'] };
+  const SOL = { pendiente: ['Pendiente', 'aviso'], parcial: ['Despachada en parte', 'aviso'], despachada: ['Despachada', 'ok'],
+    pendiente_almacen: ['Esperando al Almacén', 'info'], cancelada: ['Cancelada', 'malo'] };
   const chip = (mapa, k) => { const [t, c] = mapa[k] || [k, '']; return `<span class="estado ${c}">${esc(t)}</span>`; };
   const ot = n => 'OT-' + String(n).padStart(5, '0');
   const num = n => Number(n || 0).toLocaleString('es-DO', { maximumFractionDigits: 2 });
@@ -170,8 +170,8 @@
   // Arriba la barra de los 8 pasos; en medio SOLO el paso en que va la orden, con su botón Siguiente;
   // abajo, cerrado, todo el expediente para consultar. El paso lo guarda el servidor: se retoma donde quedó.
   // El mecánico no usa el programa: Repuestos (encargado o despachador) lleva la orden de punta a punta y Caja cobra.
-  const QUIEN = { 1: 'Repuestos', 2: 'Repuestos', 3: 'Repuestos', 4: 'Repuestos', 5: 'Repuestos', 6: 'Repuestos', 7: 'Caja' };
-  const PERMISO_PASO = { 1: 'orden.editar', 2: 'diagnostico.registrar', 3: 'solicitud.crear', 4: 'repuestos.despachar', 5: 'trabajo.finalizar', 6: 'orden.revisar' };
+  const QUIEN = { 1: 'Repuestos', 2: 'Repuestos', 3: 'Repuestos', 4: 'Repuestos', 5: 'Repuestos', 6: 'Repuestos', 7: 'Caja', 8: 'Repuestos' };
+  const PERMISO_PASO = { 1: 'orden.editar', 2: 'diagnostico.registrar', 3: 'solicitud.crear', 4: 'repuestos.despachar', 5: 'trabajo.finalizar', 6: 'orden.revisar', 8: 'orden.entregar' };
   const ABIERTA = ['pendiente', 'parcial', 'pendiente_almacen'];
   const verCaja = () => ['caja.facturar', 'caja.pago', 'caja.cerrar', 'caja.cargo', 'caja.observar'].some(p => EPT.puede(p));
 
@@ -216,7 +216,7 @@
         </div>
       </div>
 
-      ${P ? `${EPT.barraPasos(paso, o.estado === 'cerrada')}
+      ${P ? `${EPT.barraPasos(paso, !!o.entregada_en)}
       <section class="panel paso-actual">
         <header><h2><span class="paso-n">Paso ${paso} de ${EPT.PASOS.length}</span>${esc(EPT.PASOS[paso - 1])}</h2>
           <span class="der le-toca">Le toca a ${esc(QUIEN[paso])}</span></header>
@@ -254,13 +254,14 @@
       // si hay un pedido abierto, lo nuevo va a ese mismo pedido
       pedir: () => pedirRepuestos(o, recargar, abierta),
       sinRepuestos: () => confirmar('No necesita repuestos', `${ot(o.numero)} pasa directo al Trabajo (paso 5).`, 'ept_orden_sin_repuestos', o, recargar),
-      otraPieza: () => confirmar('El mecánico pide otra pieza', `${ot(o.numero)} vuelve al paso 3 para anotarla. Cuando Repuestos la entregue, regresa al Trabajo.`, 'ept_orden_otra_pieza', o, recargar),
+      otraPieza: () => confirmar('El mecánico pide otra pieza', `${ot(o.numero)} vuelve al paso 3 para anotarla. Cuando Repuestos la despache, regresa al Trabajo.`, 'ept_orden_otra_pieza', o, recargar),
       mano: () => manoDeObra(o, recargar),
       diag: () => textoLibre('Diagnóstico', 'ept_diagnostico_agregar', o, recargar),
       nota: () => textoLibre('Nota', 'ept_observacion_agregar', o, recargar),
       siguiente: () => siguiente(o, recargar),
       aprobar: () => revisar(o, true, recargar), devolver: () => revisar(o, false, recargar),
       cobro: () => EPT.abrirCobro(o.id),
+      entregar: () => entregarVehiculo(o, recargar),
       cancelar: () => cancelarOrden(o),
     })[b.dataset.acc]()));
     v.querySelectorAll('[data-usar]').forEach(b => b.addEventListener('click', () => usar(o, b.dataset, recargar)));
@@ -308,14 +309,14 @@
         const r = [...reqs].reverse().find(q => q.solicitud_id === s.id && ['nueva', 'pendiente', 'aprobada', 'parcial'].includes(q.estado));
         if (!r) return '';
         const t = (r.transferencias || []).find(q => q.estado === 'en_transito');
-        return espera(t ? `La mercancía viene de Almacén (T-${t.numero}). Cuando llegue, Repuestos la confirma en <b>Transferencias</b>.`
-          : ['nueva', 'pendiente'].includes(r.estado) ? `Se pidió a Almacén (R-${r.numero}). Esperando que Almacén la apruebe.`
-          : `Almacén aprobó R-${r.numero}. Esperando que la envíe.`);
+        return espera(t ? `El Almacén la despachó (D-${t.numero}). Cuando llegue, Repuestos registra el ingreso en <b>Despachos a Repuestos</b>.`
+          : ['nueva', 'pendiente'].includes(r.estado) ? `Se pidió al Almacén (R-${r.numero}). Esperando que el Almacén la apruebe.`
+          : `El Almacén aprobó R-${r.numero}. Esperando que la despache.`);
       };
       return {
         html: abiertas.length ? abiertas.map(s => `${almacen(s)}${meToca ? `<div data-entrega="${s.id}"><div class="vacio">Cargando…</div></div>`
             : `<div class="sol"><div class="fila"><b>S-${s.numero}</b>${chip(SOL, s.estado)}</div>${tablaPedido(s, true)}</div>`}`).join('') + otro
-          : `<p class="guia">Repuestos ya entregó o cerró todo lo pedido.${meToca ? ' Toque <b>Siguiente</b>.' : ''}</p>${otro}`,
+          : `<p class="guia">Repuestos ya despachó o cerró todo lo pedido.${meToca ? ' Toque <b>Siguiente</b>.' : ''}</p>${otro}`,
         pie: sig(),
       };
     }
@@ -332,25 +333,50 @@
       pie: meToca && o.estado === 'en_revision' ? `${boton('devolver', 'atras', 'Volver al trabajo', 'liso')}
         <button type="button" class="accion siguiente" data-acc="aprobar">${icono('imprimir')}Cerrar expediente e imprimir</button>` : '',
     };
+    // Paso 8: el cliente pagó; Repuestos le entrega el vehículo y ahí termina la orden
+    if (p === 8) {
+      const verCobro = EPT.abrirCobro && verCaja() ? `<button type="button" class="liso" data-acc="cobro">Ver el cobro</button>` : '';
+      return o.entregada_en ? {
+        html: `<p class="guia txt-ok"><b>Vehículo entregado</b> a ${esc(o.recibio_cliente || '—')} · ${fecha(o.entregada_en)}. La orden terminó.</p>`,
+        pie: verCobro,
+      } : {
+        html: meToca ? `<p class="guia">Caja confirmó el pago. Entregue el vehículo al cliente y toque <b>Entregar vehículo</b>.</p>` : espera(`Pagada. Esperando que ${esc(QUIEN[8])} entregue el vehículo.`),
+        pie: `${verCobro}${meToca ? `<button type="button" class="accion siguiente" data-acc="entregar">${icono('ok')}Entregar vehículo</button>` : ''}`,
+      };
+    }
     // Paso 7: Caja tiene su propia hoja de cobro para esta orden
-    const txt = { en_caja: 'Esperando que Caja registre la factura.', facturada: 'Facturada: falta cobrar o cerrar.', cerrada: 'Orden cerrada. El proceso terminó.' }[o.estado] || '';
+    const txt = { en_caja: 'Esperando que Caja registre la factura.', facturada: 'Facturada: falta cobrar el pago y cerrar.' }[o.estado] || '';
     return {
-      html: o.estado === 'cerrada' ? `<p class="guia txt-ok"><b>${txt}</b></p>` : espera(txt),
-      pie: !EPT.abrirCobro ? '' : verCaja() ? `<button type="button" class="accion siguiente" data-acc="cobro">${o.estado === 'cerrada' ? 'Ver el cobro' : 'Facturar y cobrar'}${icono('adelante')}</button>`
+      html: espera(txt),
+      pie: !EPT.abrirCobro ? '' : verCaja() ? `<button type="button" class="accion siguiente" data-acc="cobro">Facturar y cobrar${icono('adelante')}</button>`
         : o.estado === 'en_caja' && EPT.puede('orden.revisar') ? `<button type="button" data-acc="cobro">${icono('imprimir')}Volver a imprimir la orden de pago</button>` : '',
     };
   }
 
+  function entregarVehiculo(o, listo) {
+    EPT.ventana({
+      titulo: 'Entregar vehículo · ' + ot(o.numero), boton: 'Entregar vehículo',
+      cuerpo: `<p style="margin:0">Caja confirmó el pago. Al entregar el carro, la orden termina.</p>
+        <label class="campo">¿Quién recibe el vehículo?<input name="recibe" maxlength="120" required value="${esc(o.cliente.nombre)}"></label>
+        <label class="campo">Nota <small class="opc">(opcional)</small><input name="nota" maxlength="200"></label>`,
+      async alGuardar(f) {
+        if (!f.recibe.value.trim()) { f.recibe.classList.add('falta'); f.recibe.focus(); throw new Error('Escriba quién recibe el vehículo'); }
+        await EPT.rpc('ept_orden_entregar', { p_orden: o.id, p_recibe: f.recibe.value, p_nota: f.nota.value });
+        EPT.aviso('Vehículo entregado. La orden terminó.'); listo();
+      },
+    });
+  }
+
   function tablaPedido(s, conEntregado) {
-    return `<table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th>${conEntregado ? '<th>Entregado</th>' : ''}</tr></thead><tbody>
+    return `<table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th>${conEntregado ? '<th>Despachado</th>' : ''}</tr></thead><tbody>
       ${s.lineas.map(l => `<tr><td>${esc(l.descripcion)}${l.codigo ? ` <small class="mute">${esc(l.codigo)}</small>` : ''}${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
         <td>${num(l.cantidad)}</td>${conEntregado ? `<td>${num(l.despachada)}</td>` : ''}</tr>`).join('')}
     </tbody></table>`;
   }
 
   function tablaSaldo(saldo, conBotones) {
-    if (!saldo.length) return '<div class="vacio">No recibió piezas.</div>';
-    return `<div class="desliza"><table class="tabla"><thead><tr><th>Pieza</th><th>Recibió</th><th>Usó</th><th>Devolvió</th><th>Le quedan</th>${conBotones ? '<th></th>' : ''}</tr></thead><tbody>
+    if (!saldo.length) return '<div class="vacio">No se le han despachado piezas.</div>';
+    return `<div class="desliza"><table class="tabla"><thead><tr><th>Pieza</th><th>Le despacharon</th><th>Usó</th><th>Devolvió</th><th>Le quedan</th>${conBotones ? '<th></th>' : ''}</tr></thead><tbody>
       ${saldo.map(p => `<tr><td>${esc(p.descripcion)}</td><td>${num(p.entregado)}</td><td>${num(Number(p.utilizado) + Number(p.danado))}${Number(p.danado) ? ` <small class="mute">(${num(p.danado)} dañ.)</small>` : ''}</td>
         <td>${num(p.devuelto)}</td><td><b class="${Number(p.en_mano) ? 'txt-aviso' : 'txt-ok'}">${num(p.en_mano)}</b></td>
         ${conBotones ? `<td><div class="botones">${Number(p.en_mano) > 0 ? `
@@ -372,13 +398,13 @@
     diags.forEach(d => ev.push({ f: d.fecha, t: 'Diagnóstico', q: d.usuario?.nombre }));
     sols.forEach(s => ev.push({ f: s.fecha, t: `Pidió repuestos S-${s.numero} (${s.lineas.length} pieza${s.lineas.length === 1 ? '' : 's'})`, q: s.mecanico?.nombre }));
     desp.forEach(d => {
-      ev.push({ f: d.fecha, t: 'Repuestos entregó: ' + d.lineas.map(l => `${num(l.cantidad)} ${l.producto.descripcion}`).join(', '), q: d.usuario?.nombre });
+      ev.push({ f: d.fecha, t: 'Repuestos despachó: ' + d.lineas.map(l => `${num(l.cantidad)} ${l.producto.descripcion}`).join(', '), q: d.usuario?.nombre });
       // desde el 12 nov la entrega queda recibida sola; solo se muestran las diferencias de antes
       d.lineas.forEach(l => l.recepcion.filter(r => Number(r.cantidad_recibida) !== Number(l.cantidad)).forEach(r => ev.push({ f: r.fecha,
         t: `Mecánico recibió ${num(r.cantidad_recibida)} de ${num(l.cantidad)} ${l.producto.descripcion}` + (r.nota ? ' — ' + r.nota : '') })));
     });
     cons.forEach(c => ev.push({ f: c.fecha, t: `Usó ${num(c.utilizada)} ${c.producto.descripcion}` + (Number(c.danada) ? ` (${num(c.danada)} dañada)` : '') }));
-    devs.forEach(d => ev.push({ f: d.fecha, t: `Devolvió ${num(d.cantidad)} ${d.producto.descripcion}` + (d.estado === 'pendiente' ? ' (Repuestos aún no la recibe)' : '') }));
+    devs.forEach(d => ev.push({ f: d.fecha, t: `Devolvió ${num(d.cantidad)} ${d.producto.descripcion}` + (d.estado === 'pendiente' ? ' (Repuestos aún no registra el ingreso)' : '') }));
     mano.forEach(m => ev.push({ f: m.fecha, t: `Mano de obra: ${m.descripcion} ${dinero(m.importe)}` + (m.anulada ? ' (anulada)' : '') }));
     if (!EN_TALLER.includes(o.estado)) ev.push({ f: o.actualizado, t: 'Estado: ' + (ESTADOS[o.estado] || [o.estado])[0] });
     return ev.sort((a, b) => String(a.f).localeCompare(String(b.f)));
@@ -480,7 +506,7 @@
         <label class="campo">Nota <small class="opc">(opcional)</small><input name="obs" maxlength="200" placeholder="Ej. sobró, no era la correcta"></label>`,
       async alGuardar(f) {
         await EPT.rpc('ept_devolucion_registrar', { p_orden: o.id, p_producto: d.devolver, p_cantidad: Number(f.cant.value), p_obs: f.obs.value });
-        EPT.aviso('Devolución enviada a Repuestos'); listo();
+        EPT.aviso('Devolución anotada: Repuestos registra el ingreso'); listo();
       },
     });
   }
