@@ -213,13 +213,15 @@
   // Cada pantalla: { id, titulo, subtitulo, icono, grupo, ver: () => boolean, mostrar: async (vista) => {} }
   EPT.pantalla = p => EPT.pantallas.push(p);
 
+  // Pantallas que esta persona puede ver, en orden fijo por departamento; dentro de cada uno, el "peso"
+  // (Tablero primero) y luego el orden en que se agregaron. Lo usan el menú y el Inicio, así siempre coinciden.
+  const GRUPOS = [undefined, 'Taller', 'Repuestos', 'Almacén', 'Caja', 'Administración'];
+  const pantallasVisibles = () => EPT.pantallas.map((p, i) => ({ p, i })).filter(({ p }) => !p.ver || p.ver())
+    .sort((a, b) => (GRUPOS.indexOf(a.p.grupo) - GRUPOS.indexOf(b.p.grupo)) || ((a.p.peso || 0) - (b.p.peso || 0)) || (a.i - b.i)).map(x => x.p);
+
   function pintarMenu() {
-    // orden fijo por departamento; dentro de cada uno, el "peso" (Tablero primero) y luego el orden en que se agregaron
-    const GRUPOS = [undefined, 'Taller', 'Repuestos', 'Almacén', 'Caja', 'Administración'];
-    const visibles = EPT.pantallas.map((p, i) => ({ p, i })).filter(({ p }) => !p.ver || p.ver())
-      .sort((a, b) => (GRUPOS.indexOf(a.p.grupo) - GRUPOS.indexOf(b.p.grupo)) || ((a.p.peso || 0) - (b.p.peso || 0)) || (a.i - b.i)).map(x => x.p);
     let grupo = null; let h = '';
-    for (const p of visibles) {
+    for (const p of pantallasVisibles()) {
       if (p.grupo && p.grupo !== grupo) { h += `<div class="grupo">${esc(p.grupo)}</div>`; grupo = p.grupo; }
       h += `<button type="button" data-ir="${p.id}" ${EPT.actual === p.id ? 'aria-current="page"' : ''}>${icono(p.icono)}<span>${esc(p.titulo)}</span><span class="insignia" data-insignia="${p.id}"></span></button>`;
     }
@@ -280,9 +282,9 @@
       } finally { b.disabled = false; }
     });
     $('#btnSalir').addEventListener('click', async () => { await sb.auth.signOut(); EPT.yo = null; mostrarEntrada(); });
-    // Fondo de la pantalla: mamey (claro) → blanco → oscuro. El botón dice a cuál se pasa; se recuerda en este aparato
-    const TEMAS = { claro: 'blanco', blanco: 'oscuro', oscuro: 'claro' };
-    const NOMBRE = { claro: ['sol', 'Fondo mamey'], blanco: ['sol', 'Fondo blanco'], oscuro: ['luna', 'Modo oscuro'] };
+    // Modo claro ↔ oscuro. El botón dice a cuál se pasa; se recuerda en este aparato
+    const TEMAS = { claro: 'oscuro', oscuro: 'claro' };
+    const NOMBRE = { claro: ['sol', 'Modo claro'], oscuro: ['luna', 'Modo oscuro'] };
     const temaActual = () => document.documentElement.dataset.tema || (matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro');
     const pintarTema = () => { const [ic, t] = NOMBRE[TEMAS[temaActual()]]; $('#btnTema').innerHTML = `${icono(ic)}${t}`; };
     $('#btnTema').addEventListener('click', () => {
@@ -309,11 +311,18 @@
     id: 'inicio', titulo: 'Inicio', icono: 'inicio',
     async mostrar(v) {
       const dep = DEPARTAMENTOS[EPT.yo.departamento] || '';
-      const atajos = EPT.pantallas.filter(p => p.id !== 'inicio' && p.atajo && (!p.ver || p.ver()));
+      const atajos = pantallasVisibles().filter(p => p.id !== 'inicio' && p.atajo);
+      // Botones agrupados por departamento (mismo orden que el menú); el título del grupo solo si hay más de uno
+      const grupos = [];
+      for (const p of atajos) {
+        const g = grupos[grupos.length - 1];
+        if (g && g.nombre === p.grupo) g.pantallas.push(p); else grupos.push({ nombre: p.grupo, pantallas: [p] });
+      }
+      const boton = p => `<button type="button" class="accion" data-ir="${p.id}">${icono(p.icono)}${esc(p.atajo)}</button>`;
       v.innerHTML = `
         <div class="saludo"><h2>Hola, ${esc(EPT.yo.nombre.split(' ')[0])}</h2><p>${esc(dep)} · ¿Qué va a hacer?</p></div>
-        ${atajos.length ? `<div class="acciones">${atajos.map(p =>
-          `<button type="button" class="accion" data-ir="${p.id}">${icono(p.icono)}${esc(p.atajo)}</button>`).join('')}</div>`
+        ${atajos.length ? grupos.map(g => `<div class="dep-grupo">${grupos.length > 1 && g.nombre ? `<h3>${esc(g.nombre)}</h3>` : ''}
+          <div class="acciones">${g.pantallas.map(boton).join('')}</div></div>`).join('')
         : `<div class="panel"><div class="vacio">Las pantallas de su departamento se agregan en las próximas etapas.</div></div>`}`;
       v.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => EPT.ir(b.dataset.ir)));
 

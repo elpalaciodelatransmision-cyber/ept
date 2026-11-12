@@ -9,7 +9,7 @@
 <link rel="icon" href="icono-192.png">
 <link rel="apple-touch-icon" href="icono-192.png">
 <link rel="stylesheet" href="estilos.css">
-<script>try { var t = localStorage.getItem('ept-tema'); if (t === 'claro' || t === 'blanco' || t === 'oscuro') document.documentElement.dataset.tema = t; } catch (e) {}</script>
+<script>try { var t = localStorage.getItem('ept-tema'); if (t === 'blanco') t = 'claro'; /* el fondo blanco/mamey anterior pasa a "claro" */ if (t === 'claro' || t === 'oscuro') document.documentElement.dataset.tema = t; } catch (e) {}</script>
 <script src="lib/supabase-2.45.4.js"></script>
 <script src="lib/xlsx-0.18.5.min.js" defer></script>
 </head>
