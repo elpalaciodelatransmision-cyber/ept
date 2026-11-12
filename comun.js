@@ -105,8 +105,9 @@
   const llano = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   EPT.llano = llano;
 
-  // Los 8 pasos de una orden (el servidor guarda en cuál va cada una: ordenes.paso)
-  EPT.PASOS = ['Entrada', 'Diagnóstico', 'Pedir repuestos', 'Repuestos entrega', 'El mecánico recibe', 'Trabajo', 'Revisión', 'Caja'];
+  // Los 7 pasos de una orden (el servidor guarda en cuál va cada una: ordenes.paso).
+  // El mecánico no usa el programa: todo lo lleva Repuestos, y Caja cobra al final.
+  EPT.PASOS = ['Entrada', 'Diagnóstico', 'Pedir repuestos', 'Repuestos entrega', 'Trabajo', 'Cierre del expediente', 'Caja'];
   EPT.barraPasos = (paso, todoHecho) => `<ol class="pasos" aria-label="Pasos de la orden">${EPT.PASOS.map((t, i) => {
     const n = i + 1, hecho = todoHecho || n < paso;
     return `<li class="${hecho ? 'hecho' : n === paso ? 'actual' : ''}"${n === paso && !todoHecho ? ' aria-current="step"' : ''}><span class="n">${hecho ? '✓' : n}</span><span class="t">${esc(t)}</span></li>`;
@@ -201,7 +202,7 @@
       const enviar = f.querySelector('button[type=submit]'); const err = f.querySelector('.error');
       err.textContent = ''; if (enviar) enviar.disabled = true;
       try { if (alGuardar) await alGuardar(f, d); if (d.open) d.close(); }
-      catch (e) { err.textContent = EPT.error(e); }
+      catch (e) { err.textContent = EPT.error(e); err.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
       finally { if (enviar) enviar.disabled = false; }
     });
     d.showModal();

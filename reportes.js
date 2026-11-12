@@ -14,7 +14,7 @@
   const dia = f => f ? new Date(f).toLocaleDateString('es-DO') : '';
   const hoy = () => new Date().toISOString().slice(0, 10);
   const haceDias = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
-  const ESTADOS = { abierta: 'Sin mecánico', en_reparacion: 'En reparación', esperando_piezas: 'Esperando piezas', terminada: 'Terminada', en_revision: 'Por revisar',
+  const ESTADOS = { abierta: 'Sin mecánico', en_reparacion: 'En reparación', esperando_piezas: 'Esperando piezas', terminada: 'Terminada', en_revision: 'Por cerrar',
     en_caja: 'En Caja', facturada: 'Facturada', cerrada: 'Cerrada', cancelada: 'Cancelada' };
   const veh = v => [v?.marca, v?.modelo, v?.placa].filter(Boolean).join(' ');
   const cuenta = async q => { const { count, error } = await q; if (error) throw new Error(EPT.error(error)); return count || 0; };

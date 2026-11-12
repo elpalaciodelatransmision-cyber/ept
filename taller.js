@@ -16,7 +16,7 @@
 
   const ESTADOS = {
     abierta: ['Sin mecánico', 'aviso'], en_reparacion: ['En reparación', 'info'], esperando_piezas: ['Esperando piezas', 'aviso'],
-    terminada: ['Terminada', 'ok'], en_revision: ['Por revisar', 'aviso'], en_caja: ['En Caja', 'ok'],
+    terminada: ['Terminada', 'ok'], en_revision: ['Por cerrar', 'aviso'], en_caja: ['En Caja', 'ok'],
     facturada: ['Facturada', 'ok'], cerrada: ['Cerrada', ''], cancelada: ['Cancelada', 'malo'],
   };
   const SOL = { pendiente: ['Pendiente', 'aviso'], parcial: ['Entregada en parte', 'aviso'], despachada: ['Entregada', 'ok'],
@@ -47,7 +47,7 @@
           <div class="buscador">${icono('buscar')}<input id="bOrden" type="search" placeholder="Placa, teléfono, cliente o número" value="${esc(buscado)}"></div>
           <div class="seg" role="group" aria-label="Mostrar">
             <button type="button" data-f="taller" aria-pressed="${filtro === 'taller'}">En el taller</button>
-            <button type="button" data-f="revision" aria-pressed="${filtro === 'revision'}">Por revisar</button>
+            <button type="button" data-f="revision" aria-pressed="${filtro === 'revision'}">Por cerrar</button>
             <button type="button" data-f="todas" aria-pressed="${filtro === 'todas'}">Todas</button>
           </div>
         </div>
@@ -169,8 +169,9 @@
   // ---------- Expediente de una orden: un paso a la vez ----------
   // Arriba la barra de los 8 pasos; en medio SOLO el paso en que va la orden, con su botón Siguiente;
   // abajo, cerrado, todo el expediente para consultar. El paso lo guarda el servidor: se retoma donde quedó.
-  const QUIEN = { 1: 'el Taller', 2: 'el Taller', 3: 'el Taller', 4: 'Repuestos', 5: 'el Taller', 6: 'el Taller', 7: 'el jefe de taller', 8: 'Caja' };
-  const PERMISO_PASO = { 1: 'orden.editar', 2: 'diagnostico.registrar', 3: 'solicitud.crear', 4: 'repuestos.despachar', 5: 'recepcion.confirmar', 6: 'trabajo.finalizar', 7: 'orden.revisar' };
+  // El mecánico no usa el programa: Repuestos (encargado o despachador) lleva la orden de punta a punta y Caja cobra.
+  const QUIEN = { 1: 'Repuestos', 2: 'Repuestos', 3: 'Repuestos', 4: 'Repuestos', 5: 'Repuestos', 6: 'Repuestos', 7: 'Caja' };
+  const PERMISO_PASO = { 1: 'orden.editar', 2: 'diagnostico.registrar', 3: 'solicitud.crear', 4: 'repuestos.despachar', 5: 'trabajo.finalizar', 6: 'orden.revisar' };
   const ABIERTA = ['pendiente', 'parcial', 'pendiente_almacen'];
   const verCaja = () => ['caja.facturar', 'caja.pago', 'caja.cerrar', 'caja.cargo', 'caja.observar'].some(p => EPT.puede(p));
 
@@ -191,15 +192,14 @@
 
     // una entrega se confirma una sola vez: el servidor la manda como objeto; se deja siempre como lista
     desp.forEach(d => d.lineas.forEach(l => { l.recepcion = l.recepcion ? [].concat(l.recepcion) : []; }));
-    const sinRecibir = desp.flatMap(d => d.lineas.filter(l => !l.recepcion.length).map(l => ({ ...l, fecha: d.fecha })));
     const totalMano = mano.filter(m => !m.anulada).reduce((s, m) => s + Number(m.importe), 0);
     const abiertas = sols.filter(s => ABIERTA.includes(s.estado));
     const paso = o.paso;
     const meToca = !cancelada && !!PERMISO_PASO[paso] && EPT.puede(PERMISO_PASO[paso]);
-    const P = cancelada ? null : contenidoPaso({ ...x, sinRecibir, totalMano, abiertas, meToca });
+    const P = cancelada ? null : contenidoPaso({ ...x, totalMano, abiertas, meToca });
 
     v.innerHTML = `
-      ${o.nota_estado && paso === 6 && enTaller ? `<div class="alerta">${icono('nota')}<div><b>Devuelta para corregir:</b> ${esc(o.nota_estado)}</div></div>` : ''}
+      ${o.nota_estado && paso === 5 && enTaller ? `<div class="alerta">${icono('nota')}<div><b>Devuelta para corregir:</b> ${esc(o.nota_estado)}</div></div>` : ''}
       <div class="panel ficha-ot">
         <div class="cuerpo">
           <div class="fila"><span class="ot-num">${ot(o.numero)}</span>${chip(ESTADOS, o.estado)}
@@ -218,7 +218,7 @@
 
       ${P ? `${EPT.barraPasos(paso, o.estado === 'cerrada')}
       <section class="panel paso-actual">
-        <header><h2><span class="paso-n">Paso ${paso} de 8</span>${esc(EPT.PASOS[paso - 1])}</h2>
+        <header><h2><span class="paso-n">Paso ${paso} de ${EPT.PASOS.length}</span>${esc(EPT.PASOS[paso - 1])}</h2>
           <span class="der le-toca">Le toca a ${esc(QUIEN[paso])}</span></header>
         <div class="cuerpo">${P.html}</div>
         ${P.pie ? `<div class="pie-paso">${P.pie}</div>` : ''}
@@ -253,8 +253,8 @@
       editar: () => editarOrden(o, recargar),
       // si hay un pedido abierto, lo nuevo va a ese mismo pedido
       pedir: () => pedirRepuestos(o, recargar, abierta),
-      sinRepuestos: () => confirmar('No necesita repuestos', `${ot(o.numero)} pasa directo al Trabajo (paso 6).`, 'ept_orden_sin_repuestos', o, recargar),
-      otraPieza: () => confirmar('Necesito otra pieza', `${ot(o.numero)} vuelve al paso 3 para pedirla. Cuando Repuestos la entregue y el mecánico la reciba, regresa al Trabajo.`, 'ept_orden_otra_pieza', o, recargar),
+      sinRepuestos: () => confirmar('No necesita repuestos', `${ot(o.numero)} pasa directo al Trabajo (paso 5).`, 'ept_orden_sin_repuestos', o, recargar),
+      otraPieza: () => confirmar('El mecánico pide otra pieza', `${ot(o.numero)} vuelve al paso 3 para anotarla. Cuando Repuestos la entregue, regresa al Trabajo.`, 'ept_orden_otra_pieza', o, recargar),
       mano: () => manoDeObra(o, recargar),
       diag: () => textoLibre('Diagnóstico', 'ept_diagnostico_agregar', o, recargar),
       nota: () => textoLibre('Nota', 'ept_observacion_agregar', o, recargar),
@@ -263,7 +263,6 @@
       cobro: () => EPT.abrirCobro(o.id),
       cancelar: () => cancelarOrden(o),
     })[b.dataset.acc]()));
-    v.querySelectorAll('[data-recibir]').forEach(b => b.addEventListener('click', () => recibir(b.dataset, recargar)));
     v.querySelectorAll('[data-usar]').forEach(b => b.addEventListener('click', () => usar(o, b.dataset, recargar)));
     v.querySelectorAll('[data-devolver]').forEach(b => b.addEventListener('click', () => devolver(o, b.dataset, recargar)));
     v.querySelectorAll('[data-anular]').forEach(b => b.addEventListener('click', () => anularMano(b.dataset.anular, b.dataset.desc, recargar)));
@@ -279,7 +278,7 @@
   EPT.abrirOrden = abrirOrden;
 
   // Qué se ve y qué se puede hacer en cada paso. Solo quien tiene el permiso de ese paso ve los botones.
-  function contenidoPaso({ o, diags, saldo, mano, reqs, sinRecibir, totalMano, abiertas, meToca }) {
+  function contenidoPaso({ o, diags, saldo, mano, reqs, totalMano, abiertas, meToca }) {
     const p = o.paso;
     const boton = (acc, ic, t, cls = '') => `<button type="button" class="${cls}" data-acc="${acc}">${ic ? icono(ic) : ''}${esc(t)}</button>`;
     const sig = (t = 'Siguiente') => meToca ? `<button type="button" class="accion siguiente" data-acc="siguiente">${esc(t)}${icono('adelante')}</button>` : '';
@@ -321,36 +320,31 @@
       };
     }
     if (p === 5) return {
-      html: sinRecibir.length ? `<p class="guia">Confirme cada pieza que recibió el mecánico.</p>
-        <ul class="lista">${sinRecibir.map(l => `<li><div class="q"><b>${num(l.cantidad)} ${esc(l.producto.unidad)} · ${esc(l.producto.descripcion)}</b><span>Entregado ${fecha(l.fecha)}</span></div>
-          ${meToca ? `<button type="button" class="prin" data-recibir="${l.id}" data-cant="${l.cantidad}" data-desc="${esc(l.producto.descripcion)}">Recibí</button>` : ''}</li>`).join('')}</ul>${otro}`
-        : `<p class="guia">Todo lo entregado ya está confirmado.${meToca ? ' Toque <b>Siguiente</b>.' : ''}</p>${otro}`,
-      pie: sig(),
-    };
-    if (p === 6) return {
       html: `<h3>Piezas que tiene el mecánico</h3>${tablaSaldo(saldo, meToca)}
         <h3>Servicios y mano de obra${mano.length ? ` <span class="mute">· ${dinero(totalMano)}</span>` : ''}</h3>${listaMano(mano, meToca)}
-        ${meToca ? '<p class="guia">Anote lo que usó o devuelve y la mano de obra. Al final toque <b>Terminé el trabajo</b>.</p>' : otro}`,
+        ${meToca ? '<p class="guia">Anote lo que el mecánico usó o devuelve y la mano de obra. Cuando el mecánico termine, toque <b>El mecánico terminó</b>.</p>' : otro}`,
       pie: meToca ? `${EPT.puede('mano_obra.registrar') ? boton('mano', 'llave', 'Servicio / mano de obra') : ''}
-        ${EPT.puede('solicitud.crear') ? boton('otraPieza', 'caja', 'Necesito otra pieza', 'liso') : ''}${sig('Terminé el trabajo')}` : '',
+        ${EPT.puede('solicitud.crear') ? boton('otraPieza', 'caja', 'Pide otra pieza', 'liso') : ''}${sig('El mecánico terminó')}` : '',
     };
-    if (p === 7) return {
-      html: `<p class="guia">Revise el trabajo: las piezas usadas y la mano de obra (${dinero(totalMano)}) están en <b>Ver todo el expediente</b>.</p>${otro}`,
-      pie: meToca && o.estado === 'en_revision' ? `${boton('devolver', 'atras', 'Devolver al taller', 'liso')}
-        <button type="button" class="accion siguiente" data-acc="aprobar">Aprobar y enviar a Caja${icono('adelante')}</button>` : '',
+    if (p === 6) return {
+      html: `<p class="guia">Revise lo que se va a cobrar: piezas usadas y mano de obra (${dinero(totalMano)}). Todo está en <b>Ver todo el expediente</b>.
+        Al cerrar se imprime la <b>orden de pago</b> para que el cliente pague en Caja.</p>${otro}`,
+      pie: meToca && o.estado === 'en_revision' ? `${boton('devolver', 'atras', 'Volver al trabajo', 'liso')}
+        <button type="button" class="accion siguiente" data-acc="aprobar">${icono('imprimir')}Cerrar expediente e imprimir</button>` : '',
     };
-    // Paso 8: Caja tiene su propia hoja de cobro para esta orden
+    // Paso 7: Caja tiene su propia hoja de cobro para esta orden
     const txt = { en_caja: 'Esperando que Caja registre la factura.', facturada: 'Facturada: falta cobrar o cerrar.', cerrada: 'Orden cerrada. El proceso terminó.' }[o.estado] || '';
     return {
       html: o.estado === 'cerrada' ? `<p class="guia txt-ok"><b>${txt}</b></p>` : espera(txt),
-      pie: verCaja() && EPT.abrirCobro ? `<button type="button" class="accion siguiente" data-acc="cobro">${o.estado === 'cerrada' ? 'Ver el cobro' : 'Facturar y cobrar'}${icono('adelante')}</button>` : '',
+      pie: !EPT.abrirCobro ? '' : verCaja() ? `<button type="button" class="accion siguiente" data-acc="cobro">${o.estado === 'cerrada' ? 'Ver el cobro' : 'Facturar y cobrar'}${icono('adelante')}</button>`
+        : o.estado === 'en_caja' && EPT.puede('orden.revisar') ? `<button type="button" data-acc="cobro">${icono('imprimir')}Volver a imprimir la orden de pago</button>` : '',
     };
   }
 
   function tablaPedido(s, conEntregado) {
-    return `<table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th>${conEntregado ? '<th>Entregado</th><th>Recibido</th>' : ''}</tr></thead><tbody>
+    return `<table class="tabla"><thead><tr><th>Pieza</th><th>Pedido</th>${conEntregado ? '<th>Entregado</th>' : ''}</tr></thead><tbody>
       ${s.lineas.map(l => `<tr><td>${esc(l.descripcion)}${l.codigo ? ` <small class="mute">${esc(l.codigo)}</small>` : ''}${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
-        <td>${num(l.cantidad)}</td>${conEntregado ? `<td>${num(l.despachada)}</td><td>${num(l.recibida)}</td>` : ''}</tr>`).join('')}
+        <td>${num(l.cantidad)}</td>${conEntregado ? `<td>${num(l.despachada)}</td>` : ''}</tr>`).join('')}
     </tbody></table>`;
   }
 
@@ -379,7 +373,8 @@
     sols.forEach(s => ev.push({ f: s.fecha, t: `Pidió repuestos S-${s.numero} (${s.lineas.length} pieza${s.lineas.length === 1 ? '' : 's'})`, q: s.mecanico?.nombre }));
     desp.forEach(d => {
       ev.push({ f: d.fecha, t: 'Repuestos entregó: ' + d.lineas.map(l => `${num(l.cantidad)} ${l.producto.descripcion}`).join(', '), q: d.usuario?.nombre });
-      d.lineas.forEach(l => l.recepcion.forEach(r => ev.push({ f: r.fecha,
+      // desde el 12 nov la entrega queda recibida sola; solo se muestran las diferencias de antes
+      d.lineas.forEach(l => l.recepcion.filter(r => Number(r.cantidad_recibida) !== Number(l.cantidad)).forEach(r => ev.push({ f: r.fecha,
         t: `Mecánico recibió ${num(r.cantidad_recibida)} de ${num(l.cantidad)} ${l.producto.descripcion}` + (r.nota ? ' — ' + r.nota : '') })));
     });
     cons.forEach(c => ev.push({ f: c.fecha, t: `Usó ${num(c.utilizada)} ${c.producto.descripcion}` + (Number(c.danada) ? ` (${num(c.danada)} dañada)` : '') }));
@@ -462,21 +457,6 @@
     });
   }
 
-  function recibir(d, listo) {
-    const entregado = Number(d.cant);
-    EPT.ventana({
-      titulo: 'Recibí: ' + d.desc, boton: 'Confirmar',
-      cuerpo: `<p class="mute" style="margin:0">Repuestos entregó <b>${num(entregado)}</b>. ¿Cuántas recibió el mecánico?</p>
-        <label class="campo">Recibió<input name="cant" type="number" min="0" max="${entregado}" step="any" value="${entregado}" inputmode="decimal" class="grande"></label>
-        <label class="campo" id="cNota" hidden>¿Qué pasó? <small class="opc">(llegó menos)</small><input name="nota" maxlength="200"></label>`,
-      alAbrir(f) { f.cant.addEventListener('input', () => { f.querySelector('#cNota').hidden = !(Number(f.cant.value) < entregado); }); },
-      async alGuardar(f) {
-        await EPT.rpc('ept_recepcion_confirmar', { p_linea: d.recibir, p_cantidad: Number(f.cant.value), p_nota: f.nota.value });
-        EPT.aviso(Number(f.cant.value) < entregado ? 'Recibido. Se avisó la diferencia a Repuestos.' : 'Recibido'); listo();
-      },
-    });
-  }
-
   function usar(o, d, listo) {
     EPT.ventana({
       titulo: 'Usó: ' + d.desc, boton: 'Guardar',
@@ -519,22 +499,29 @@
         <label class="campo">Nota <small class="opc">(opcional)</small><input name="nota" maxlength="150"></label>
         <div class="dos"><label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs, o.mecanico_id)}</select></label>
           <label class="campo">Importe RD$<input name="importe" type="number" min="0" step="any" inputmode="decimal" required></label></div>
+        <p class="falta-precio" id="sinPrecio" hidden>Este servicio no tiene precio fijo: escriba el importe.</p>
         <label class="check" id="cPedir" hidden><input type="checkbox" name="pedir" checked> <span id="txtPedir"></span></label>
         <label class="check"><input type="checkbox" name="adicional"> <span>Es un trabajo adicional (no estaba en el motivo)</span></label>`,
       alAbrir(f) {
+        f.importe.addEventListener('input', () => f.importe.classList.toggle('falta', f.importe.value === '' && !f.querySelector('#sinPrecio').hidden));
         f.servicio.addEventListener('change', () => {
           const s = servs.find(x => x.id === f.servicio.value);
           f.querySelector('#cDesc').hidden = f.servicio.value !== 'otro';
           const d = f.querySelector('#descServ'); d.hidden = !(s && s.descripcion); d.textContent = s ? s.descripcion : '';
+          // con precio se llena solo; sin precio se pide el importe en ese momento, no al guardar
           if (s) f.importe.value = Number(s.precio) ? s.precio : '';
+          const sinPrecio = f.servicio.value === 'otro' || (s && !Number(s.precio));
+          f.querySelector('#sinPrecio').hidden = !sinPrecio;
+          f.importe.classList.toggle('falta', sinPrecio && f.importe.value === '');
+          if (sinPrecio && f.servicio.value !== 'otro') f.importe.focus();
           const conPiezas = s && s.piezas.length && puedePedir;
           f.querySelector('#cPedir').hidden = !conPiezas;
           if (conPiezas) f.querySelector('#txtPedir').textContent = 'Pedir a Repuestos sus piezas: ' + EPT.piezasTexto(s.piezas, prods);
         });
       },
       async alGuardar(f) {
-        if (!f.servicio.value) throw new Error('Elija el servicio');
-        if (f.importe.value === '') throw new Error('Escriba el importe');
+        if (!f.servicio.value) { f.servicio.focus(); throw new Error('Elija el servicio'); }
+        if (f.importe.value === '') { f.importe.classList.add('falta'); f.importe.focus(); throw new Error('Escriba el importe de este servicio'); }
         if (f.servicio.value === 'otro') {
           if (!f.desc.value.trim()) throw new Error('Escriba qué trabajo se hizo');
           await EPT.rpc('ept_mano_obra_agregar', { p_orden: o.id, p_descripcion: f.desc.value + (f.nota.value.trim() ? ' — ' + f.nota.value.trim() : ''),
@@ -592,14 +579,19 @@
     });
   }
 
+  // Paso 6: Repuestos cierra el expediente e imprime la orden de pago que el cliente lleva a Caja,
+  // o lo devuelve al Trabajo si falta algo.
   function revisar(o, aprobar, listo) {
     EPT.ventana({
-      titulo: aprobar ? 'Enviar a Caja' : 'Devolver al taller', boton: aprobar ? 'Aprobar y enviar' : 'Devolver',
-      cuerpo: aprobar ? `<p style="margin:0">¿Revisó ${ot(o.numero)} y está todo correcto? Pasará a Caja para facturar.</p>`
-        : `<label class="campo">¿Qué hay que corregir?<textarea name="nota" required maxlength="500"></textarea></label>`,
+      titulo: aprobar ? 'Cerrar expediente · ' + ot(o.numero) : 'Volver al trabajo', boton: aprobar ? 'Cerrar e imprimir' : 'Volver al trabajo',
+      cuerpo: aprobar ? `<p style="margin:0">¿Está todo lo que se va a cobrar? Se imprime la orden de pago y ${ot(o.numero)} pasa a Caja.</p>`
+        : `<label class="campo">¿Qué falta o hay que corregir?<textarea name="nota" required maxlength="500"></textarea></label>`,
       async alGuardar(f) {
         await EPT.rpc('ept_orden_revisar', { p_orden: o.id, p_aprobar: aprobar, p_nota: aprobar ? '' : f.nota.value });
-        EPT.aviso(aprobar ? 'Enviada a Caja' : 'Devuelta al taller'); listo();
+        if (!aprobar) { EPT.aviso('Devuelta al trabajo'); listo(); return; }
+        EPT.aviso('Expediente cerrado: imprima la orden de pago');
+        await EPT.abrirCobro(o.id);
+        setTimeout(() => window.print(), 300);
       },
     });
   }
