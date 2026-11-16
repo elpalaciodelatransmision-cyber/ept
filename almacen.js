@@ -92,6 +92,23 @@
     },
   });
 
+  // Lector de código de barras (ver comun.js): una pieza del almacén escaneada abre su ficha;
+  // un código que no existe, quien crea artículos lo puede registrar de una vez.
+  EPT.abridores.push(async prod => {
+    if (!prod.en_almacen || !EPT.puedeVer('inventario')) return false;
+    const [arts, F] = await Promise.all([cargarInventario(), EPT.cargarFamilias()]);
+    const p = arts.find(x => x.id === prod.id); if (!p) return false;
+    fichaArticulo(p, F); return true;
+  });
+  EPT.alDesconocido = codigo => {
+    if (!puedeAlm('articulos')) return false;
+    EPT.ventana({ titulo: 'Código no registrado', boton: 'Crear artículo nuevo',
+      cuerpo: `<p style="margin:0">El código de barras <b>${esc(codigo)}</b> no está en el programa.</p>
+        <p class="mute" style="margin:0">Si es mercancía nueva, créela aquí y después le da ingreso.</p>`,
+      alGuardar: () => { editarArticulo(null, codigo); } });
+    return true;
+  };
+
   // ---------- Ficha de un artículo: datos, existencia, botones y su historial ----------
   async function fichaArticulo(p, F) {
     const [movs, regs, viejo] = await Promise.all([
@@ -216,7 +233,7 @@
   }
 
   // Nuevo o editar. El estante se pone al crearlo; después se cambia con Traslado.
-  async function editarArticulo(p) {
+  async function editarArticulo(p, barrasNuevo = '') {
     const F = await EPT.cargarFamilias();
     const nuevo = !p;
     // al crear desde una familia elegida en la pantalla, viene ya puesta
@@ -237,7 +254,7 @@
         ${nuevo ? `<div class="dos"><label class="campo">Estante <small class="opc">(opcional)</small><input name="estante" maxlength="40"></label>
           <label class="campo">Existencia de hoy <small class="opc">(lo que hay)</small><input name="ini" type="number" min="0" step="any" inputmode="decimal"></label></div>` : ''}
         <div class="dos"><label class="campo">Código <small class="opc">${nuevo ? '(vacío = se pone solo, ej. ACE-001)' : ''}</small><input name="codigo" maxlength="30" value="${esc(p ? p.codigo : '')}" ${nuevo ? '' : 'disabled'}></label>
-          <label class="campo">Código de barras <small class="opc">(opcional)</small><input name="barras" maxlength="40" value="${esc(p ? p.codigo_barras : '')}"></label></div>
+          <label class="campo">Código de barras <small class="opc">(opcional)</small><input name="barras" maxlength="40" value="${esc(p ? p.codigo_barras : barrasNuevo)}" placeholder="Escanéelo aquí"></label></div>
         <label class="campo">Notas <small class="opc">(opcional)</small><input name="notas" maxlength="300" value="${esc(p ? p.notas : '')}"></label>`,
       alAbrir(f, d) {
         // al elegir familia en un artículo nuevo, se marca solo si se cobra (se puede cambiar)
@@ -321,7 +338,7 @@
         <table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Tenía Repuestos</th><th>Hay en el Almacén</th><th>Aprobado</th><th>Despachado</th>
           ${decidir ? '<th>Aprobar</th>' : ''}${despachar ? '<th>Despachar ahora</th>' : ''}</tr></thead><tbody>
         ${r.lineas.map(l => { const hay = exA[l.producto.id] || 0; const falta = Number(l.aprobada) - Number(l.enviada);
-          return `<tr data-l="${l.id}"><td><b>${esc(l.producto.descripcion)}</b> <small class="mute">${esc(l.producto.codigo)}</small></td>
+          return `<tr data-l="${l.id}" data-pid="${l.producto.id}"><td><b>${esc(l.producto.descripcion)}</b> <small class="mute">${esc(l.producto.codigo)}</small></td>
             <td>${num(l.cantidad)}</td><td>${num(l.disponible_repuestos)}</td><td><b class="${hay < Number(l.cantidad) ? 'txt-aviso' : ''}">${num(hay)}</b></td>
             <td>${num(l.aprobada)}</td><td>${num(l.enviada)}</td>
             ${decidir ? `<td><input class="cant apr" type="number" min="0" max="${l.cantidad}" step="any" value="${Math.min(Number(l.cantidad), hay)}"></td>` : ''}
@@ -400,7 +417,7 @@
 
   async function abrirDespacho(id, recien) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
-    const t = await EPT.leer(sb.from('transferencias').select('id,numero,estado,origen,destino,fecha_envio,fecha_recibo,fecha_resuelto,nota_diferencia,envio:usuarios!transferencias_enviado_por_fkey(nombre),recibio:usuarios!transferencias_recibido_por_fkey(nombre),requisicion:requisiciones(id,numero,orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(id,enviada,recibida,diferencia_nota,producto:productos(codigo,descripcion,unidad))').eq('id', id).single());
+    const t = await EPT.leer(sb.from('transferencias').select('id,numero,estado,origen,destino,fecha_envio,fecha_recibo,fecha_resuelto,nota_diferencia,envio:usuarios!transferencias_enviado_por_fkey(nombre),recibio:usuarios!transferencias_recibido_por_fkey(nombre),requisicion:requisiciones(id,numero,orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(id,enviada,recibida,diferencia_nota,producto:productos(id,codigo,descripcion,unidad))').eq('id', id).single());
     const ingresar = t.estado === 'en_transito' && EPT.puede('repuestos.recibir');
     const resolver = t.estado === 'con_diferencia' && EPT.puede('almacen.diferencia');
     EPT.$('#titulo').textContent = 'Despacho ' + dn(t.numero);
@@ -420,7 +437,7 @@
           ${t.nota_diferencia ? `<div class="ancho"><dt>Diferencia</dt><dd>${esc(t.nota_diferencia.replace(/^aparecio:/, 'Apareció:').replace(/^regresa:/, 'Regresó al Almacén:').replace(/^perdida:/, 'Se perdió:'))} · ${fecha(t.fecha_resuelto)}</dd></div>` : ''}</dl>
       </div>
       <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Despachado</th><th>${ingresar ? 'Llegó' : 'Ingresó'}</th>${ingresar ? '<th>Si llegó menos, ¿qué pasó?</th>' : ''}</tr></thead><tbody>
-        ${t.lineas.map(l => `<tr data-l="${l.id}" data-des="${l.enviada}"><td><b>${esc(l.producto.descripcion)}</b> <small class="mute">${esc(l.producto.codigo)}</small></td>
+        ${t.lineas.map(l => `<tr data-l="${l.id}" data-pid="${l.producto.id}" data-des="${l.enviada}"><td><b>${esc(l.producto.descripcion)}</b> <small class="mute">${esc(l.producto.codigo)}</small></td>
           <td>${num(l.enviada)} ${esc(l.producto.unidad)}</td>
           <td>${ingresar ? `<input class="cant ing" type="number" min="0" max="${l.enviada}" step="any" value="${l.enviada}">`
             : l.recibida == null ? '—' : `<b class="${Number(l.recibida) < Number(l.enviada) ? 'txt-malo' : 'txt-ok'}">${num(l.recibida)}</b>`}

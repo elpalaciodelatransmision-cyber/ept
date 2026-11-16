@@ -114,7 +114,7 @@
   }).join('')}</ol>`;
   const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia|lote|almacen_articulo/;
   EPT.cargarProductos = () => EPT.memoria('productos', () => EPT.leerTodo(() => sb.from('productos')
-    .select('id,codigo,descripcion,unidad,numero_parte,precio,usada').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
+    .select('id,codigo,descripcion,unidad,numero_parte,precio,usada,codigo_barras,en_almacen').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
 
   // ---------- Familias y subfamilias del inventario (las usan el Almacén y Productos) ----------
   EPT.cargarFamilias = () => EPT.memoria('familias', async () => {
@@ -164,9 +164,11 @@
   EPT.buscadorPiezas = prods => {
     if (prods._buscador) return prods._buscador;
     const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${String(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')}${p.usada ? ' usada' : ''}`));
+    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${String(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')} ${p.codigo_barras || ''}${p.usada ? ' usada' : ''}`));
     const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
-    const porCodigo = new Map(prods.map(p => [String(p.codigo).toLowerCase(), p]));
+    // el código de la casa (ACE-001) o el código de barras llevan a la misma pieza
+    const porCodigo = new Map([...prods.filter(p => p.codigo_barras).map(p => [String(p.codigo_barras).trim().toLowerCase(), p]),
+      ...prods.map(p => [String(p.codigo).toLowerCase(), p])]);
     const b = {
       etiqueta,
       buscar(q, max = 12) {
@@ -202,6 +204,11 @@
     });
     caja.addEventListener('keydown', e => {
       if (!e.target.classList.contains('pz-busca')) return;
+      // Enter con un código exacto (escrito o del lector de barras, que da Enter antes de que salga la lista): se elige esa pieza
+      if (e.key === 'Enter' && !e.target.parentElement.querySelector('.sugerencias li.activa')) {
+        const exacta = bp.deTexto(e.target.value);
+        if (exacta) { e.preventDefault(); clearTimeout(espera); e.target.value = bp.etiqueta(exacta); cerrar(e.target); if (alElegir) alElegir(e.target, exacta); return; }
+      }
       const ul = lista(e.target); if (ul.hidden) return;
       const items = [...ul.querySelectorAll('li[data-v]')]; const act = ul.querySelector('li.activa'); let i = items.indexOf(act);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -255,6 +262,63 @@
     const primero = f.querySelector('input:not([type=hidden]),select,textarea'); if (primero) primero.focus();
     return d;
   };
+
+  // ---------- Lector de código de barras ----------
+  // El lector "teclea" el código muy rápido y termina con Enter (o Tab). Se reconoce en CUALQUIER pantalla,
+  // esté o no el cursor en un campo; si cayó dentro de un campo, el campo vuelve a quedar como estaba.
+  // Qué se hace con la pieza escaneada:
+  //   · en un buscador de piezas (Pedir repuestos, Servicios…) el buscador la elige solo;
+  //   · en el campo "Código de barras" de una ventana, se queda escrito ahí (para registrar un artículo);
+  //   · si la pantalla tiene una tabla de piezas (requisición, despacho, pedido del taller), se marca su renglón
+  //     y el cursor queda en la cantidad;
+  //   · si no, se abre la ficha de la pieza para consultar, dar ingreso o despachar (EPT.abridores).
+  // Un código que no existe lo ofrece crear quien maneja el almacén (EPT.alDesconocido).
+  EPT.abridores = [];
+  const lector = { txt: '', t0: 0, ult: 0, campo: null, antes: null };
+  const esCampo = el => el && el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=file]),textarea');
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const ahora = performance.now();
+    if (e.key.length === 1) {
+      if (ahora - lector.ult > 60) Object.assign(lector, { txt: '', t0: ahora, campo: e.target, antes: esCampo(e.target) ? e.target.value : null });
+      lector.txt += e.key; lector.ult = ahora; return;
+    }
+    if (e.key !== 'Enter' && e.key !== 'Tab') return;
+    const { txt, t0, ult, campo, antes } = lector; lector.txt = '';
+    // a mano nadie escribe 4 letras o más con menos de 40 milésimas entre una y otra
+    if (txt.length < 4 || ahora - ult > 100 || (ult - t0) / (txt.length - 1) > 40) return;
+    if (campo !== e.target) return;
+    if (campo.classList && campo.classList.contains('pz-busca')) return;           // el buscador de piezas se encarga
+    e.preventDefault(); e.stopPropagation();
+    if (campo.matches && campo.matches('input[name=barras]')) return;               // se queda escrito en "Código de barras"
+    if (antes != null) { campo.value = antes; campo.dispatchEvent(new Event('input', { bubbles: true })); }
+    escaneado(txt.trim()).catch(err => EPT.aviso(EPT.error(err), true));
+  }, true);
+
+  async function escaneado(c) {
+    const abierta = document.querySelector('dialog[open]');
+    if (abierta) {
+      if (abierta.querySelector('button[type=submit]')) { EPT.aviso('Termine o cancele la ventana abierta antes de escanear otra pieza', true); return; }
+      abierta.close();                                                             // una ficha de consulta: se cambia por la nueva
+    }
+    const p = EPT.buscadorPiezas(await EPT.cargarProductos()).deTexto(c);
+    if (!p) {
+      if (EPT.alDesconocido && EPT.alDesconocido(c)) return;
+      EPT.aviso(`El código ${c} no está registrado en el programa`, true); return;
+    }
+    const filas = [...document.querySelectorAll('#vista tr[data-pid]')];
+    if (filas.length) {
+      const tr = filas.find(x => x.dataset.pid === p.id);
+      if (!tr) { EPT.aviso(`${p.codigo} · ${p.descripcion}: no está en esta lista`, true); return; }
+      filas.forEach(x => x.classList.remove('escaneada')); tr.classList.add('escaneada');
+      tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const inp = tr.querySelector('input.cant'); if (inp) { inp.focus(); inp.select(); }
+      EPT.aviso(`${p.codigo} · ${p.descripcion}`); return;
+    }
+    for (const abrir of EPT.abridores) if (await abrir(p)) return;
+    EPT.aviso(`${p.codigo} · ${p.descripcion}`);
+  }
+  EPT.puedeVer = id => { const s = EPT.pantallas.find(x => x.id === id); return !!s && (!s.ver || s.ver()); };
 
   // Cada pantalla: { id, titulo, subtitulo, icono, grupo, ver: () => boolean, mostrar: async (vista) => {} }
   EPT.pantalla = p => EPT.pantallas.push(p);

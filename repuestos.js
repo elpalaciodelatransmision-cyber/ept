@@ -101,7 +101,7 @@
         ${s.justificacion ? `<p class="mute" style="margin:4px 0">Justificación: ${esc(s.justificacion)}</p>` : ''}
         <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Despachado</th><th>Falta</th><th>Hay para despachar</th><th>En el Almacén</th>${abierta ? '<th>Despachar ahora</th>' : ''}</tr></thead><tbody>
         ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = hayPara(l.producto_id);
-          return `<tr data-l="${l.id}" data-falta="${falta}">
+          return `<tr data-l="${l.id}"${l.producto_id ? ` data-pid="${l.producto_id}"` : ''} data-falta="${falta}">
             <td>${l.producto_id ? `<b>${esc(l.descripcion)}</b> <small class="mute">${esc(l.codigo)}</small>${usada(l.producto_id) ? ' <span class="marca-usada">USADA</span>' : ''}` :
               `<b>${esc(l.descripcion)}</b> <span class="estado aviso">sin código</span>${abierta && falta > 0 ? `<br>${EPT.campoPieza()}` : ''}`}
               ${l.observaciones ? `<br><small class="mute">${esc(l.observaciones)}</small>` : ''}</td>
@@ -322,6 +322,14 @@
       dlg.close(); fichaProducto(p);
     } catch (e) { EPT.aviso(EPT.error(e), true); }
   }
+
+  // Lector de código de barras (ver comun.js): una pieza que no es del almacén abre su ficha de Productos
+  EPT.abridores.push(async prod => {
+    if (!EPT.puedeVer('productos') || (prod.en_almacen && EPT.puedeVer('inventario'))) return false;   // las del almacén abren su ficha del almacén
+    const d = datosCat || await cargarCatalogo();
+    const p = d.prodPorId.get(prod.id); if (!p) return false;
+    fichaProducto(p); return true;
+  });
 
   async function fichaProducto(p) {
     const d = datosCat || await cargarCatalogo();
