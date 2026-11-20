@@ -125,6 +125,92 @@
     return { fams, subs, porSub, subsDe: fid => subs.filter(s => s.familia_id === fid),
       nombre: sid => { const s = porSub.get(sid); return s ? s.familia.nombre + ' · ' + s.nombre : ''; } };
   }, { cambiaCon: /familia/ });
+  // El programa ubica solo un artículo nuevo por su nombre: automática, mecánica, CVT, DCT, hidráulico, eléctrico,
+  // lubricantes, filtros, tren motriz, tornillería, gastables, limpieza, herramientas… Devuelve la subfamilia (o la de
+  // "Otros · Sin clasificar"). Quien lo registra puede cambiarla. Las reglas van de lo más específico a lo más general.
+  const REGLAS_FAMILIA = [
+    // aceites y fluidos primero ("aceite CVT" es lubricante, no pieza CVT)
+    [/\b(atf|dexron|mercon|aceite de transmision automatica)\b/, 'Lubricantes, aceites y grasas', 'Aceite ATF'],
+    [/aceite.*\bcvt\b|\bcvt\b.*(aceite|fluido)|\bns-?[23]\b|\bcvtf\b/, 'Lubricantes, aceites y grasas', 'Aceite CVT'],
+    [/aceite.*(manual|transfer|diferencial|engranaje)|\b(75w|80w|85w|gl-?[45])\b/, 'Lubricantes, aceites y grasas', 'Aceite de caja manual y transfer'],
+    [/aceite.*motor|\b(0w|5w|10w|15w|20w)-?\d/, 'Lubricantes, aceites y grasas', 'Aceite de motor'],
+    [/\baditivo/, 'Lubricantes, aceites y grasas', 'Aditivos'],
+    [/\bgrasa\b/, 'Lubricantes, aceites y grasas', 'Grasas'],
+    [/liquido de freno|\bdot ?[345]\b|refrigerante|anticongelante|coolant|limpiaparabrisas|limpia ?vidrio/, 'Lubricantes, aceites y grasas', 'Líquido de frenos y otros fluidos'],
+    [/\bspray\b|limpiador|wd-?40|penetrante|desengrasante en spray/, 'Lubricantes, aceites y grasas', 'Sprays y limpiadores'],
+    [/\baceite\b/, 'Lubricantes, aceites y grasas', 'Aceite ATF'],
+    // filtros
+    [/filtro.*(transmision|caja|atf|cvt)/, 'Filtros', 'Filtros de transmisión'],
+    [/filtro.*(aceite|motor)/, 'Filtros', 'Filtros de aceite de motor'],
+    [/\bfiltro/, 'Filtros', 'Otros filtros'],
+    // DCT / DSG y CVT
+    [/\b(dsg|dct|mecatronic)/, 'Transmisión DCT / DSG', 'Otras piezas'],
+    [/\bcvt\b.*(banda|cadena|correa)|(banda|cadena|correa).*\bcvt\b/, 'Transmisión CVT', 'Bandas y cadenas'],
+    [/\bpolea/, 'Transmisión CVT', 'Poleas'],
+    [/\bcvt\b.*(reten|sello|junta|empaque)|(reten|sello|junta|empaque).*\bcvt\b/, 'Transmisión CVT', 'Juntas, sellos y retenedores'],
+    [/\bcvt\b.*(rodamiento|cojinete|balero)|(rodamiento|cojinete|balero).*\bcvt\b/, 'Transmisión CVT', 'Rodamientos'],
+    [/\bcvt\b/, 'Transmisión CVT', 'Otras piezas'],
+    // eléctrico y electrónico
+    [/solenoide/, 'Eléctrico y electrónico', 'Solenoides'],
+    [/\bsensor/, 'Eléctrico y electrónico', 'Sensores'],
+    [/\bswitch|interruptor|inhibidor|neutral safety/, 'Eléctrico y electrónico', 'Switches'],
+    [/\b(modulo|computadora|tcm|ecu|pcm)\b/, 'Eléctrico y electrónico', 'Módulos y computadoras (TCM)'],
+    [/\barnes|ramal|conector electrico|\bsocket\b/, 'Eléctrico y electrónico', 'Arneses y conectores'],
+    [/bombillo.*\b(2|dos) contactos?|\b1157\b|\b7443\b/, 'Guantes, bombillos y limpieza', 'Bombillos de 2 contactos'],
+    [/bombillo|\b1156\b|\b7440\b/, 'Guantes, bombillos y limpieza', 'Bombillos de 1 contacto'],
+    // hidráulico y enfriamiento
+    [/cuerpo de valvula|valve body/, 'Sistema hidráulico y enfriamiento', 'Cuerpo de válvulas'],
+    [/\bvalvula|placa separadora|separator plate/, 'Sistema hidráulico y enfriamiento', 'Válvulas y placas'],
+    [/bomba de aceite|\bbomba\b/, 'Sistema hidráulico y enfriamiento', 'Bombas de aceite'],
+    [/enfriador|serpentin|termostato|radiador/, 'Sistema hidráulico y enfriamiento', 'Enfriadores y termostatos'],
+    [/\blinea|manguera|\bconector\b|niple/, 'Sistema hidráulico y enfriamiento', 'Líneas, mangueras y conectores'],
+    // transmisión mecánica (caja manual)
+    [/sincronizador|\bsincro/, 'Transmisión mecánica', 'Sincronizadores'],
+    [/(disco|plato|collarin|kit) de clutch|clutch.*(plato|collarin|manual)|\bembrague|collarin/, 'Transmisión mecánica', 'Clutch (disco, plato y collarín)'],
+    [/\b(engrane|pinon|corona)\b/, 'Transmisión mecánica', 'Engranes'],
+    [/(caja|transmision) (manual|mecanica)/, 'Transmisión mecánica', 'Otras piezas'],
+    // transmisión automática
+    [/\bkit\b.*(reparacion|overhaul|master|maestro|banner)|\boverhaul/, 'Transmisión automática', 'Kits de reparación'],
+    [/disco.*(friccion|clutch)|\bclutches\b|friction|\bfriccion/, 'Transmisión automática', 'Discos de fricción'],
+    [/disco.*acero|\bsteel/, 'Transmisión automática', 'Discos de acero'],
+    [/\bbanda\b/, 'Transmisión automática', 'Bandas'],
+    [/sprag|rueda libre|one ?way/, 'Transmisión automática', 'Rueda libre (sprag)'],
+    [/convertidor|torque converter/, 'Transmisión automática', 'Convertidores de torque'],
+    [/\bcarter\b|\btapon\b|\bpan\b/, 'Transmisión automática', 'Cárter, juntas y tapones'],
+    [/\b(piston|resorte|reten de resortes)\b/, 'Transmisión automática', 'Pistones, resortes y retenes'],
+    [/\b(tambor|planetario|housing)\b/, 'Transmisión automática', 'Tambores, planetarios y ejes'],
+    [/\b(buje|bushing|arandela de empuje|rodamiento|cojinete|balero)\b/, 'Transmisión automática', 'Bujes, rodamientos y arandelas'],
+    [/\b(reten|retenedor|sello|o-?ring|junta|empaque|empacadura)\b/, 'Transmisión automática', 'Juntas, sellos y retenedores'],
+    // tren motriz, soportes y mandos
+    [/\bsoporte/, 'Tren motriz, soportes y mandos', 'Soportes'],
+    [/\b(cable|palanca|selector|varillaje)\b/, 'Tren motriz, soportes y mandos', 'Cables, palancas y selectores'],
+    [/\b(cardan|semieje|flecha homocinetica|yugo|cruceta|homocinetica)\b/, 'Tren motriz, soportes y mandos', 'Cardán, semiejes y yugos'],
+    [/transfer|4x4/, 'Tren motriz, soportes y mandos', 'Caja de transferencia 4x4'],
+    [/flexplate|flex plate|campana|varilla de medir|bayoneta/, 'Tren motriz, soportes y mandos', 'Flexplate, campana y varilla'],
+    [/\b(eje|flecha)\b/, 'Transmisión automática', 'Tambores, planetarios y ejes'],
+    // tornillería
+    [/\btornillo|perno|esparrago/, 'Tornillería', 'Tornillos'],
+    [/\btuerca/, 'Tornillería', 'Tuercas'],
+    [/\barandela/, 'Tornillería', 'Arandelas'],
+    [/abrazadera/, 'Tornillería', 'Abrazaderas'],
+    [/\b(pasador|clip|seguro|chaveta|presilla)\b/, 'Tornillería', 'Pasadores, clips y seguros'],
+    // gastables, limpieza, herramientas
+    [/silicon|sellador|pegamento|loctite|permatex|junta liquida/, 'Misceláneos y gastables', 'Selladores, silicones y pegamentos'],
+    [/\bcinta|amarre|tie ?wrap|teipe/, 'Misceláneos y gastables', 'Cintas y amarres'],
+    [/\bguante/, 'Guantes, bombillos y limpieza', 'Guantes'],
+    [/jabon|desengrasante|trapo|wipe|papel toalla|detergente|escoba|suape|cloro|limpieza/, 'Guantes, bombillos y limpieza', 'Materiales de limpieza'],
+    [/calibrador|micrometro|reloj comparador|medidor|multimetro|escaner/, 'Herramientas y equipos', 'Medición'],
+    [/compresor|gato|elevador|prensa|soldadora|esmeril|taladro/, 'Herramientas y equipos', 'Equipos'],
+    [/herramienta especial|compresor de resortes|extractor/, 'Herramientas y equipos', 'Herramientas especiales de transmisión'],
+    [/\b(llave|dado|alicate|destornillador|martillo|herramienta)\b/, 'Herramientas y equipos', 'Herramientas manuales'],
+    [/bombilla|pintura|brocha|foco|lampara|bombillo de oficina/, 'Materiales de mantenimiento', 'Mantenimiento del local'],
+  ];
+  EPT.clasificar = (nombre, F) => {
+    const t = llano(nombre);
+    const buscar = (fam, sub) => F.subs.find(s => s.nombre === sub && F.porSub.get(s.id).familia.nombre === fam);
+    for (const [re, fam, sub] of REGLAS_FAMILIA) if (re.test(t)) { const s = buscar(fam, sub); if (s) return s.id; }
+    return (buscar('Otros', 'Sin clasificar') || {}).id || '';
+  };
   // Las dos listas (familia → subfamilia) de un formulario; EPT.enlazarFamilias las conecta
   EPT.selectFamilias = (F, subId) => {
     const sel = subId ? F.porSub.get(subId) : null;
@@ -186,7 +272,8 @@
   // el campo: <input class="pz-busca"> con su lista debajo
   EPT.campoPieza = (extra = '') => `<div class="busca-pieza"><input class="pz-busca" ${extra} placeholder="Código o nombre de la pieza" maxlength="120" autocomplete="off"><ul class="sugerencias" hidden></ul></div>`;
   // da vida a todos los campos .pz-busca dentro de "caja" (también los que se agreguen después)
-  EPT.sugerencias = (caja, prods, { alElegir, libre = true } = {}) => {
+  // nada(texto) → html que se ofrece dentro de la lista cuando no se encuentra nada (un botón con data-nada); alNada(texto, campo) al tocarlo
+  EPT.sugerencias = (caja, prods, { alElegir, libre = true, nada, alNada } = {}) => {
     const bp = EPT.buscadorPiezas(prods);
     let espera = null;
     const lista = inp => inp.parentElement.querySelector('.sugerencias');
@@ -195,7 +282,7 @@
     const mostrar = inp => {
       const ul = lista(inp); const r = bp.buscar(inp.value);
       ul.innerHTML = r.map((p, i) => `<li data-v="${esc(bp.etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}${p.usada ? ' <span class="marca-usada">USADA</span>' : ''}</li>`).join('')
-        || (inp.value.trim() ? `<li class="nada">${libre ? 'No está en el catálogo: se pedirá tal como lo escribió' : 'No se encontró. Pruebe con el código o otra palabra.'}</li>` : '');
+        || (inp.value.trim() ? `<li class="nada">${(nada && nada(inp.value.trim())) || (libre ? 'No está en el catálogo: se pedirá tal como lo escribió' : 'No se encontró. Pruebe con el código o otra palabra.')}</li>` : '');
       ul.hidden = !ul.innerHTML;
     };
     caja.addEventListener('input', e => {
@@ -220,6 +307,12 @@
     });
     // tocar una sugerencia (pointerdown para que el campo no pierda el foco antes)
     caja.addEventListener('pointerdown', e => {
+      const bn = e.target.closest('.sugerencias [data-nada]');
+      if (bn && alNada) {
+        e.preventDefault();
+        const inp = bn.closest('.busca-pieza').querySelector('.pz-busca'); const t = inp.value.trim();
+        cerrar(inp); alNada(t, inp); return;
+      }
       const li = e.target.closest('.sugerencias li[data-v]'); if (!li) return;
       e.preventDefault(); elegir(li.closest('.busca-pieza').querySelector('.pz-busca'), li);
     });
@@ -306,6 +399,8 @@
       if (EPT.alDesconocido && EPT.alDesconocido(c)) return;
       EPT.aviso(`El código ${c} no está registrado en el programa`, true); return;
     }
+    // una pantalla que está armando un documento recibe la pieza escaneada (la agrega a su lista)
+    if (EPT.alEscanear && await EPT.alEscanear(p)) return;
     const filas = [...document.querySelectorAll('#vista tr[data-pid]')];
     if (filas.length) {
       const tr = filas.find(x => x.dataset.pid === p.id);
@@ -320,30 +415,55 @@
   }
   EPT.puedeVer = id => { const s = EPT.pantallas.find(x => x.id === id); return !!s && (!s.ver || s.ver()); };
 
-  // Cada pantalla: { id, titulo, subtitulo, icono, grupo, ver: () => boolean, mostrar: async (vista) => {} }
+  // Cada pantalla: { id, titulo, subtitulo, icono, grupo (su departamento), pestana (nombre corto), explica (una línea
+  //   que dice para qué sirve), peso (orden dentro del departamento), atajo, ver: () => boolean, mostrar: async (vista) => {} }
+  // Cada departamento es UN renglón del menú. Al entrar, sus pantallas se ven como pestañas arriba
+  // y como sub-renglones debajo del departamento en el menú (como los albaranes de Libra: un módulo, varios documentos).
   EPT.pantalla = p => EPT.pantallas.push(p);
 
-  // Pantallas que esta persona puede ver, en orden fijo por departamento; dentro de cada uno, el "peso"
-  // (Tablero primero) y luego el orden en que se agregaron. Lo usan el menú y el Inicio, así siempre coinciden.
   const GRUPOS = [undefined, 'Taller', 'Repuestos', 'Almacén', 'Caja', 'Administración'];
+  const ICONO_GRUPO = { Taller: 'carro', Repuestos: 'estante', 'Almacén': 'anaquel', Caja: 'caja_reg', 'Administración': 'tablero' };
+  // Pantallas que esta persona puede ver, en orden fijo por departamento; dentro de cada uno, el "peso"
+  // y luego el orden en que se agregaron. Lo usan el menú, las pestañas y el Inicio, así siempre coinciden.
   const pantallasVisibles = () => EPT.pantallas.map((p, i) => ({ p, i })).filter(({ p }) => !p.ver || p.ver())
     .sort((a, b) => (GRUPOS.indexOf(a.p.grupo) - GRUPOS.indexOf(b.p.grupo)) || ((a.p.peso || 0) - (b.p.peso || 0)) || (a.i - b.i)).map(x => x.p);
+  const delGrupo = g => pantallasVisibles().filter(p => p.grupo === g);
+  const nombrePestana = p => p.pestana || p.titulo;
 
   function pintarMenu() {
-    let grupo = null; let h = '';
-    for (const p of pantallasVisibles()) {
-      if (p.grupo && p.grupo !== grupo) { h += `<div class="grupo">${esc(p.grupo)}</div>`; grupo = p.grupo; }
-      h += `<button type="button" data-ir="${p.id}" ${EPT.actual === p.id ? 'aria-current="page"' : ''}>${icono(p.icono)}<span>${esc(p.titulo)}</span><span class="insignia" data-insignia="${p.id}"></span></button>`;
+    const act = EPT.pantallas.find(x => x.id === EPT.actual);
+    let h = '';
+    for (const p of pantallasVisibles().filter(x => !x.grupo)) {
+      h += `<button type="button" data-ir="${p.id}" ${EPT.actual === p.id ? 'aria-current="page"' : ''}>${icono(p.icono)}<span>${esc(p.titulo)}</span></button>`;
+    }
+    for (const g of GRUPOS.slice(1)) {
+      const ps = delGrupo(g); if (!ps.length) continue;
+      const abierto = !!act && act.grupo === g;
+      h += `<button type="button" data-ir="${ps[0].id}" ${abierto ? 'aria-current="page"' : ''}>${icono(ICONO_GRUPO[g])}<span>${esc(g)}</span></button>`;
+      if (abierto && ps.length > 1) {
+        h += `<div class="hijos">${ps.map(p => `<button type="button" data-ir="${p.id}" class="${p.id === EPT.actual ? 'act' : ''}">${esc(nombrePestana(p))}</button>`).join('')}</div>`;
+      }
     }
     $('#menu').innerHTML = h;
   }
 
+  // Pestañas del departamento arriba de la pantalla, con la línea que explica para qué sirve la que está abierta
+  function pintarPestanas(p) {
+    const ps = p.grupo ? delGrupo(p.grupo) : [];
+    $('#pestanas').innerHTML = ps.length > 1
+      ? `<nav class="pestanas" aria-label="${esc(p.grupo)}">${ps.map(x => `<button type="button" data-ir="${x.id}" class="${x.id === p.id ? 'act' : ''}" ${x.id === p.id ? 'aria-current="page"' : ''}>${esc(nombrePestana(x))}</button>`).join('')}</nav>
+         ${p.explica ? `<p class="explica">${esc(p.explica)}</p>` : ''}`
+      : '';
+    return ps.length > 1;
+  }
+
   EPT.ir = async id => {
     const p = EPT.pantallas.find(x => x.id === id && (!x.ver || x.ver())) || EPT.pantallas[0];
-    EPT.actual = p.id;
+    EPT.actual = p.id; EPT.alEscanear = null;
     document.body.classList.remove('menu-abierto');
-    $('#titulo').textContent = p.titulo;
-    $('#subtitulo').textContent = p.subtitulo || '';
+    const conPestanas = pintarPestanas(p);
+    $('#titulo').textContent = conPestanas ? p.grupo : p.titulo;
+    $('#subtitulo').textContent = conPestanas ? nombrePestana(p) : (p.subtitulo || '');
     $('#barraBotones').innerHTML = '';
     pintarMenu();
     const vista = $('#vista');
@@ -409,6 +529,7 @@
       if (document.body.classList.contains('menu-abierto') && !e.target.closest('#side,#btnMenu')) document.body.classList.remove('menu-abierto');
     });
     $('#menu').addEventListener('click', e => { const b = e.target.closest('[data-ir]'); if (b) EPT.ir(b.dataset.ir); });
+    $('#pestanas').addEventListener('click', e => { const b = e.target.closest('[data-ir]'); if (b) EPT.ir(b.dataset.ir); });
 
     const { data } = await sb.auth.getSession();
     if (!data.session) return mostrarEntrada();
@@ -416,25 +537,41 @@
     catch (e) { await sb.auth.signOut().catch(() => {}); mostrarEntrada(EPT.error(e)); }
   };
 
-  // ---------- Inicio ----------
+  // ---------- Inicio: "¿Qué va a hacer?" ----------
+  // Cada departamento pone sus botones con palabras de todos los días (EPT.verbo). Un departamento que no tiene
+  // verbos muestra los atajos de sus pantallas. verbo: { grupo, titulo, sub, ir (pantalla), hacer (después de ir),
+  // ver: () => boolean, prin (el más usado), cuenta: async () => número para la insignia, peso }
+  EPT.verbos = [];
+  EPT.verbo = v => EPT.verbos.push(v);
+
   EPT.pantalla({
     id: 'inicio', titulo: 'Inicio', icono: 'inicio',
     async mostrar(v) {
       const dep = DEPARTAMENTOS[EPT.yo.departamento] || '';
-      const atajos = pantallasVisibles().filter(p => p.id !== 'inicio' && p.atajo);
-      // Botones agrupados por departamento (mismo orden que el menú); el título del grupo solo si hay más de uno
-      const grupos = [];
-      for (const p of atajos) {
-        const g = grupos[grupos.length - 1];
-        if (g && g.nombre === p.grupo) g.pantallas.push(p); else grupos.push({ nombre: p.grupo, pantallas: [p] });
-      }
-      const boton = p => `<button type="button" class="accion" data-ir="${p.id}">${icono(p.icono)}${esc(p.atajo)}</button>`;
+      const vis = pantallasVisibles();
+      const bloques = GRUPOS.slice(1).map(g => {
+        let vs = EPT.verbos.filter(x => x.grupo === g && (!x.ver || x.ver()) && (!x.ir || EPT.puedeVer(x.ir)))
+          .sort((a, b) => (a.peso || 0) - (b.peso || 0));
+        if (!vs.length) vs = vis.filter(p => p.grupo === g && p.atajo).map(p => ({ titulo: p.atajo, sub: p.explica || p.subtitulo || '', ir: p.id }));
+        return { g, vs };
+      }).filter(b => b.vs.length);
+      const todos = bloques.flatMap(b => b.vs);
+      const boton = x => `<button type="button" class="verbo ${x.prin ? 'prin' : ''}" data-v="${todos.indexOf(x)}">
+          <b>${esc(x.titulo)}<span class="insignia"></span></b>${x.sub ? `<span>${esc(x.sub)}</span>` : ''}</button>`;
       v.innerHTML = `
         <div class="saludo"><h2>Hola, ${esc(EPT.yo.nombre.split(' ')[0])}</h2><p>${esc(dep)} · ¿Qué va a hacer?</p></div>
-        ${atajos.length ? grupos.map(g => `<div class="dep-grupo">${grupos.length > 1 && g.nombre ? `<h3>${esc(g.nombre)}</h3>` : ''}
-          <div class="acciones">${g.pantallas.map(boton).join('')}</div></div>`).join('')
-        : `<div class="panel"><div class="vacio">Las pantallas de su departamento se agregan en las próximas etapas.</div></div>`}`;
-      v.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => EPT.ir(b.dataset.ir)));
+        ${bloques.length ? bloques.map(b => `<div class="bloque"><h3>${icono(ICONO_GRUPO[b.g])}${esc(b.g)}</h3><div class="verbos">${b.vs.map(boton).join('')}</div></div>`).join('')
+        : `<div class="panel"><div class="vacio">Todavía no tiene pantallas asignadas. Hable con el administrador.</div></div>`}`;
+      v.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', async () => {
+        const x = todos[b.dataset.v];
+        if (x.ir) await EPT.ir(x.ir);
+        if (x.hacer) await x.hacer();
+      }));
+      // números de lo que espera (no detienen la pantalla)
+      todos.forEach((x, i) => {
+        if (!x.cuenta) return;
+        x.cuenta().then(n => { const s = v.querySelector(`[data-v="${i}"] .insignia`); if (s && n > 0) s.textContent = n; }).catch(() => {});
+      });
 
       // Avisos sin leer de su departamento (el servidor solo le manda los suyos)
       const avisos = await EPT.leer(sb.from('notificaciones').select('id,texto,enlace,fecha').eq('leida', false)

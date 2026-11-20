@@ -415,3 +415,62 @@ details.expediente[open]>summary{margin-bottom:16px}
 .lista.lotes li{align-items:flex-start}
 .lista.lotes .q span{white-space:normal}
 @media (max-width:560px){.renglon.lote{grid-template-columns:minmax(0,1fr) 70px 90px 36px}}
+
+/* ---------- 20 nov: departamentos con pestañas (como los módulos de Libra) ---------- */
+/* en el menú: el departamento abierto muestra sus pantallas debajo */
+.side-nav .hijos{display:grid;gap:1px;margin:2px 0 6px 21px;padding-left:10px;border-left:1px solid var(--sideline)}
+.side-nav .hijos button{min-height:36px;font-size:14px;font-weight:500;color:var(--sidemute);padding:0 10px}
+.side-nav .hijos button:hover{color:var(--onside)}
+.side-nav .hijos button.act{color:#fff;background:var(--side2);font-weight:600}
+/* arriba de la pantalla: pestañas subrayadas y una línea que dice para qué sirve */
+.pestanas{display:flex;gap:2px;border-bottom:1px solid var(--line2);margin:0 0 14px;overflow-x:auto;scrollbar-width:thin}
+.pestanas button{flex:0 0 auto;background:transparent;border:0;border-bottom:3px solid transparent;border-radius:0;min-height:46px;padding:0 14px;font-weight:600;font-size:15px;color:var(--mute)}
+.pestanas button:hover{color:var(--ink)}
+.pestanas button.act{color:var(--ink);border-bottom-color:var(--rojo)}
+.explica{margin:-4px 0 16px;color:var(--mute);font-size:14.5px}
+/* Inicio: "¿Qué va a hacer?" por departamento */
+.bloque{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sombra);margin-bottom:16px}
+.bloque h3{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:16px}
+.bloque h3 .ico{color:var(--mute)}
+.verbos{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.verbo{display:grid;gap:3px;justify-items:start;align-content:center;text-align:left;white-space:normal;padding:12px 14px;min-height:72px;border:1px solid var(--line2);border-radius:10px;background:var(--panel)}
+.verbo b{display:flex;align-items:center;gap:8px;font-size:16px}
+.verbo b .insignia{margin-left:0}
+.verbo span{font-size:13.5px;color:var(--mute);font-weight:500;line-height:1.3}
+.verbo:hover{border-color:var(--marino)}
+.verbo.prin{background:var(--marino);border-color:var(--marino);color:var(--onmarino)}
+.verbo.prin span{color:var(--onmarino);opacity:.85}
+.verbo.prin:hover{background:var(--marino2)}
+/* documentos (albaranes) y presupuestos */
+.serie{flex:0 0 auto;min-width:78px;font:800 14.5px/1 system-ui;letter-spacing:.02em}
+.doc-nuevo{display:grid;gap:12px}
+.paso-doc{display:flex;gap:10px;align-items:center;font-weight:700;font-size:15.5px;margin-top:8px}
+.paso-doc i{font-style:normal;width:26px;height:26px;flex:0 0 auto;border-radius:50%;background:var(--marino);color:var(--onmarino);display:grid;place-items:center;font-size:14px}
+.cab3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cuatro-col{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.busca-doc .pz-busca{border:2px solid var(--marino)}
+.doc-lineas td{vertical-align:middle}
+.doc-lineas input.cant{width:96px;text-align:center;font-weight:700}
+.doc-lineas select.por{min-height:40px;width:auto}
+.totales-doc{display:grid;justify-items:end;gap:6px;margin:6px 0 0;font-size:15px;text-align:right}
+.totales-doc .total{font-size:19px}
+.totales-doc .campo-linea{display:flex;align-items:center;gap:8px;font-weight:600}
+.totales-doc .campo-linea input{width:140px;text-align:right}
+.totales-doc.fijo{padding:4px 18px 14px}
+.grande-btn{min-height:50px;padding:0 22px;font-size:16px;justify-self:start}
+.valor-fijo{display:block;min-height:46px;padding:12px 0 0;font-size:14.5px;color:var(--ink2)}
+.renglon.dos-col{grid-template-columns:minmax(0,1fr) 90px 40px}
+.hoja-pres .cuerpo{padding:24px 28px}
+/* la nota de validez del presupuesto: al final, con aire y discreta, pero clara */
+.nota-precios{margin:56px 0 0;padding-top:16px;border-top:1px solid var(--line);font-size:13px;line-height:1.65;color:var(--mute);text-align:center}
+.nota-precios b{color:var(--ink);font-weight:600}
+@media (max-width:760px){.cab3,.cuatro-col{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.hoja-pres .cuerpo{padding:16px}}
+@media (max-width:480px){.cab3{grid-template-columns:minmax(0,1fr)}.verbos{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.verbo{min-height:64px;padding:10px 12px}.verbo b{font-size:15px}}
+@media print{
+  #pestanas,.busca-doc{display:none!important}
+  .nota-precios{color:#333;margin-top:40px}
+  .hoja-pres{border:0}
+}
+.doc-nuevo>.seg{justify-self:start}
+.verbo{justify-content:start}
+.sugerencias li.nada:has([data-nada]){display:flex;flex-wrap:wrap;align-items:center;gap:8px;white-space:normal;cursor:default}

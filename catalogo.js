@@ -10,7 +10,7 @@
 
   EPT.pantalla({
     id: 'catalogo', titulo: 'Vehículos y transmisiones', subtitulo: 'Qué transmisión lleva cada vehículo',
-    icono: 'engrane', grupo: 'Repuestos', ver: () => EPT.puede('catalogo.gestionar') || EPT.puede('productos.gestionar') || EPT.puede('repuestos.despachar'),
+    icono: 'engrane', grupo: 'Repuestos', peso: 8, pestana: 'Vehículos', explica: 'Qué transmisión lleva cada vehículo. Sirve para buscar la pieza correcta.', ver: () => EPT.puede('catalogo.gestionar') || EPT.puede('productos.gestionar') || EPT.puede('repuestos.despachar'),
     async mostrar(v) {
       v.innerHTML = `<div class="fila" style="margin-bottom:14px"><div class="seg" role="group">
           <button type="button" data-t="marcas" aria-pressed="${pestana === 'marcas'}">Marcas y modelos</button>

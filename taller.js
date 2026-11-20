@@ -81,6 +81,10 @@
   }
 
   // ---------- Nueva orden ----------
+  // Presupuesto aceptado de la orden (si vino de uno): sus piezas se proponen al pedir y sus servicios llevan su precio
+  const presupuestoDe = o => o.presupuesto_id ? EPT.leer(sb.from('presupuestos').select('numero,lineas').eq('id', o.presupuesto_id).single()) : Promise.resolve(null);
+  const prN = n => 'PR-' + String(n).padStart(4, '0');
+
   async function mecanicosActivos() {
     return EPT.leer(sb.from('mecanicos').select('id,nombre').eq('activo', true).order('nombre'));
   }
@@ -439,11 +443,13 @@
 
   // sol = {id, numero}: agrega a ese mismo pedido en vez de hacer uno nuevo
   async function pedirRepuestos(o, listo, sol) {
-    const [mecs, prods] = await Promise.all([mecanicosActivos(), EPT.cargarProductos()]);
+    const [mecs, prods, pres] = await Promise.all([mecanicosActivos(), EPT.cargarProductos(), sol ? null : presupuestoDe(o)]);
     const bp = EPT.buscadorPiezas(prods);
-    const renglon = () => `<div class="renglon">
-        ${EPT.campoPieza('name="pieza"')}
-        <input name="cant" type="number" min="1" step="any" value="1" inputmode="decimal" aria-label="Cantidad">
+    // un pedido nuevo de una orden que vino de un presupuesto empieza con las piezas del presupuesto (se pueden quitar o agregar)
+    const delPres = (pres ? pres.lineas : []).filter(l => l.producto_id).map(l => ({ p: prods.find(x => x.id === l.producto_id), cant: l.cantidad })).filter(x => x.p);
+    const renglon = (x) => `<div class="renglon">
+        ${EPT.campoPieza('name="pieza"' + (x ? ` value="${esc(bp.etiqueta(x.p))}"` : ''))}
+        <input name="cant" type="number" min="1" step="any" value="${x ? x.cant : 1}" inputmode="decimal" aria-label="Cantidad">
         <input name="nota" placeholder="Nota (opcional)" maxlength="120">
         <button type="button" class="liso" data-quitar aria-label="Quitar">✕</button></div>`;
     EPT.ventana({
@@ -453,7 +459,8 @@
         ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>.</p>`
           : `<label class="campo">Mecánico que las pide<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
-          <div id="renglones">${renglon()}</div>
+          ${delPres.length ? `<p class="pista" style="margin:0 0 6px">Se pusieron las piezas del presupuesto <b>${prN(pres.numero)}</b>. Puede quitar o agregar.</p>` : ''}
+          <div id="renglones">${delPres.length ? delPres.map(renglon).join('') : renglon()}</div>
           <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>`,
       alAbrir(f) {
         const caja = f.querySelector('#renglones');
@@ -513,7 +520,8 @@
 
   // Servicio del catálogo (con su precio y sus piezas) u otro trabajo escrito a mano
   async function manoDeObra(o, listo) {
-    const [mecs, servs, prods] = await Promise.all([mecanicosActivos(), EPT.cargarServicios(), EPT.cargarProductos()]);
+    const [mecs, servs, prods, pres] = await Promise.all([mecanicosActivos(), EPT.cargarServicios(), EPT.cargarProductos(), presupuestoDe(o)]);
+    const precioPres = sid => { const l = (pres ? pres.lineas : []).find(x => x.servicio_id === sid); return l ? Math.round(Number(l.precio) * Number(l.cantidad) * 100) / 100 : null; };
     const puedePedir = EPT.puede('solicitud.crear');
     EPT.ventana({
       titulo: 'Servicio / mano de obra · ' + ot(o.numero), boton: 'Agregar',
@@ -535,8 +543,11 @@
           f.querySelector('#cDesc').hidden = f.servicio.value !== 'otro';
           const d = f.querySelector('#descServ'); d.hidden = !(s && s.descripcion); d.textContent = s ? s.descripcion : '';
           // con precio se llena solo; sin precio se pide el importe en ese momento, no al guardar
-          if (s) f.importe.value = Number(s.precio) ? s.precio : '';
-          const sinPrecio = f.servicio.value === 'otro' || (s && !Number(s.precio));
+          // si estaba en el presupuesto aceptado, se cobra lo que se le dijo al cliente
+          const dePres = s ? precioPres(s.id) : null;
+          if (s) f.importe.value = dePres != null ? dePres : Number(s.precio) ? s.precio : '';
+          d.textContent = (s ? s.descripcion || '' : '') + (dePres != null ? (s.descripcion ? ' · ' : '') + 'Precio del presupuesto ' + prN(pres.numero) : ''); d.hidden = !d.textContent;
+          const sinPrecio = f.servicio.value === 'otro' || (s && dePres == null && !Number(s.precio));
           f.querySelector('#sinPrecio').hidden = !sinPrecio;
           f.importe.classList.toggle('falta', sinPrecio && f.importe.value === '');
           if (sinPrecio && f.servicio.value !== 'otro') f.importe.focus();

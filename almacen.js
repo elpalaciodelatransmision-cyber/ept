@@ -1,6 +1,10 @@
-// EPT CONTROL OPERATIVO · Almacén: inventario por familias, requisiciones de Repuestos y despachos.
-// Palabras de la casa: todo lo que SALE es un DESPACHO, todo lo que ENTRA es un INGRESO,
-// y mover dentro del almacén (de estante) es un TRASLADO.
+// EPT CONTROL OPERATIVO · Almacén, con la lógica de los albaranes de Libra (Edisa):
+// cada movimiento es un DOCUMENTO con número propio por serie, cabecera y varias líneas.
+//   IN  Ingreso: factura de compra del suplidor (alimenta el almacén y pone el costo al día) o ingreso interno
+//   DP  Despacho a una persona          DS  Devolución al suplidor
+//   D   Despacho a Repuestos (por requisición R-, va "en camino" hasta que Repuestos registra el ingreso)
+//   TR  Traslado (cambiar de estante)   AJ  Ajuste por conteo
+// Palabras de la casa: todo lo que SALE es un DESPACHO, todo lo que ENTRA es un INGRESO.
 (function () {
   'use strict';
   const { sb, esc, icono } = EPT;
@@ -16,35 +20,54 @@
     ajuste: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   });
   const num = n => Number(n || 0).toLocaleString('es-DO', { maximumFractionDigits: 2 });
+  const dinero = n => 'RD$ ' + Number(n || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const ot = n => 'OT-' + String(n).padStart(5, '0');
   const fecha = f => f ? new Date(f).toLocaleString('es-DO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  const fechaCorta = f => f ? new Date(f + 'T12:00:00').toLocaleDateString('es-DO', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const REQ = { nueva: ['Nueva', 'aviso'], pendiente: ['Pendiente', 'aviso'], aprobada: ['Aprobada', 'info'], parcial: ['Aprobada en parte', 'info'],
     rechazada: ['Rechazada', 'malo'], sin_existencia: ['Sin existencia', 'malo'], cancelada: ['Cancelada', ''], recibida: ['Completada', 'ok'] };
   const DES = { en_preparacion: ['En preparación', 'aviso'], en_transito: ['En camino', 'info'], recibida: ['Ingresado', 'ok'],
     con_diferencia: ['Con diferencia', 'malo'], diferencia_resuelta: ['Diferencia resuelta', 'ok'] };
   const chip = (m, k) => { const [t, c] = m[k] || [k, '']; return `<span class="estado ${c}">${esc(t)}</span>`; };
   const dn = n => 'D-' + n, rn = n => 'R-' + n;
+  const codDoc = d => d.serie + '-' + String(d.numero).padStart(4, '0');
   const puedeAlm = p => EPT.puede('almacen.' + p);
   const manejaAlmacen = () => ['articulos', 'ingreso', 'despacho', 'traslado', 'ajustar', 'resolver', 'transferir'].some(puedeAlm);
+  const CLASE_ART = { pieza: 'Pieza', insumo: 'Insumo', miscelaneo: 'Misceláneo', producto: 'Producto' };
+  // tipo de artículo que se propone según la familia (se puede cambiar)
+  const CLASE_DE_FAMILIA = { 'Lubricantes, aceites y grasas': 'insumo', 'Tornillería': 'insumo', 'Misceláneos y gastables': 'miscelaneo',
+    'Guantes, bombillos y limpieza': 'miscelaneo', 'Herramientas y equipos': 'miscelaneo', 'Materiales de mantenimiento': 'miscelaneo' };
+
+  // Qué es cada documento: nombre, para qué sirve, quién puede hacerlo
+  const DOC = {
+    compra:   { tipo: 'ingreso',  nombre: 'Factura de compra',       corto: 'Compra',     permiso: 'ingreso' },
+    interno:  { tipo: 'ingreso',  nombre: 'Ingreso interno',         corto: 'Interno',    permiso: 'ingreso' },
+    persona:  { tipo: 'despacho', nombre: 'Despacho a una persona',  corto: 'A una persona', permiso: 'despacho' },
+    suplidor: { tipo: 'despacho', nombre: 'Devolución al suplidor',  corto: 'Devolución al suplidor', permiso: 'despacho' },
+    traslado: { tipo: 'traslado', nombre: 'Traslado',                corto: 'Traslado',   permiso: 'traslado' },
+    conteo:   { tipo: 'ajuste',   nombre: 'Ajuste por conteo',       corto: 'Ajuste',     permiso: 'ajustar' },
+  };
+  const LISTA_DE = { ingreso: 'alm_ingresos', despacho: 'alm_despachos', traslado: 'alm_traslados', ajuste: 'alm_ajustes' };
 
   // =====================================================================
-  // Inventario del almacén, por familias y subfamilias
-  // El Almacén lo maneja; Repuestos solo lo consulta para hacer sus requisiciones.
+  // Existencia del almacén, por familias y subfamilias
+  // El Almacén la maneja; Repuestos solo la consulta para hacer sus pedidos.
   // =====================================================================
   let famInv = '', subInv = '', buscaInv = '';
   const cargarInventario = () => EPT.leer(sb.from('productos')
-    .select('id,codigo,descripcion,unidad,marca_pieza,numero_parte,minimo,notas,subfamilia_id,cobrable,codigo_barras,estante,empaque_nombre,empaque_unidades,activo,existencias(ubicacion,cantidad)')
+    .select('id,codigo,descripcion,unidad,marca_pieza,numero_parte,minimo,notas,subfamilia_id,cobrable,codigo_barras,estante,empaque_nombre,empaque_unidades,activo,precio,costo,ultimo_costo,clase_articulo,existencias(ubicacion,cantidad)')
     .eq('en_almacen', true).order('codigo'))
     .then(l => l.map(p => ({ ...p, hay: Number((p.existencias || []).find(e => e.ubicacion === 'almacen')?.cantidad || 0) })));
   const bajo = p => Number(p.minimo) > 0 && p.hay <= Number(p.minimo);
 
   EPT.pantalla({
-    id: 'inventario', titulo: 'Inventario del almacén', subtitulo: 'Por familia y subfamilia, con existencia y mínimo',
-    icono: 'anaquel', grupo: 'Almacén', atajo: 'Inventario', peso: -1,
+    id: 'inventario', titulo: 'Existencia del almacén', subtitulo: 'Por familia y subfamilia, con existencia y mínimo',
+    pestana: 'Existencia', explica: 'Lo que hay en el almacén ahora mismo, por familia. Toque un artículo para ver su ficha y sus movimientos.',
+    icono: 'anaquel', grupo: 'Almacén', atajo: 'Existencia', peso: 1,
     ver: () => manejaAlmacen() || ['repuestos.requisicion', 'repuestos.despachar', 'reportes.ver'].some(p => EPT.puede(p)),
     async mostrar(v) {
       if (puedeAlm('articulos')) {
-        EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevoArt">${icono('mas')}Nuevo artículo</button>`;
+        EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevoArt">${icono('mas')}Crear artículo</button>`;
         EPT.$('#btnNuevoArt').addEventListener('click', () => editarArticulo(null));
       }
       const [arts, F] = await Promise.all([cargarInventario(), EPT.cargarFamilias()]);
@@ -53,7 +76,7 @@
       const famsCon = F.fams.filter(f => deFam(f.id).length);
       if (famInv && !famsCon.some(f => f.id === famInv)) { famInv = ''; subInv = ''; }
       v.innerHTML = `
-        ${manejaAlmacen() ? '' : `<p class="guia" style="margin-top:0">${icono('ojo')}Solo para consultar. Para pedir algo al almacén haga una requisición desde el pedido.</p>`}
+        ${manejaAlmacen() ? '' : `<p class="guia" style="margin-top:0">${icono('ojo')}Solo para consultar. Para pedir algo al almacén use la pestaña «Pedidos al almacén» de Repuestos.</p>`}
         <div class="filtros-inv">
           <label class="campo">Familia<select id="fFam"><option value="">Todas las familias (${activos.length})</option>
             ${famsCon.map(f => `<option value="${f.id}" ${f.id === famInv ? 'selected' : ''}>${esc(f.nombre)} (${deFam(f.id).length})</option>`).join('')}</select></label>
@@ -71,11 +94,11 @@
       const pintar = () => {
         const pal = EPT.llano(buscaInv.trim()).split(/\s+/).filter(Boolean);
         const lista = EPT.alfabetico(activos.filter(p => (!famInv || F.porSub.get(p.subfamilia_id)?.familia_id === famInv) && (!subInv || p.subfamilia_id === subInv)
-          && pal.every(w => EPT.llano([p.codigo, p.descripcion, p.marca_pieza, p.numero_parte, p.estante, p.codigo_barras, F.nombre(p.subfamilia_id)].join(' ')).includes(w))));
+          && pal.every(w => EPT.llano([p.codigo, p.descripcion, p.marca_pieza, p.numero_parte, p.estante, p.codigo_barras, F.nombre(p.subfamilia_id), CLASE_ART[p.clase_articulo]].join(' ')).includes(w))));
         v.querySelector('#cBajo').textContent = lista.filter(bajo).length;
         v.querySelector('#cCero').textContent = lista.filter(p => p.hay <= 0).length;
         caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => `<li class="toca" data-a="${p.id}"><span class="codigo">${esc(p.codigo)}</span>
-            <div class="q"><b>${esc(p.descripcion)}</b><span>${[F.nombre(p.subfamilia_id), p.marca_pieza, p.numero_parte, p.estante ? 'Estante ' + p.estante : '', p.cobrable ? '' : 'No se cobra'].filter(Boolean).map(esc).join(' · ')}</span></div>
+            <div class="q"><b>${esc(p.descripcion)}</b><span>${[CLASE_ART[p.clase_articulo], F.nombre(p.subfamilia_id), p.marca_pieza, p.numero_parte, p.estante ? 'Estante ' + p.estante : '', p.cobrable ? '' : 'No se cobra'].filter(Boolean).map(esc).join(' · ')}</span></div>
             <div class="stock"><span class="${bajo(p) ? 'txt-malo' : p.hay <= 0 ? 'mute' : ''}"><b>${num(p.hay)}</b> ${esc(p.unidad)}</span>${Number(p.minimo) > 0 ? `<span class="mute">mín. ${num(p.minimo)}</span>` : ''}</div></li>`).join('')}</ul>`
           : `<div class="vacio">${arts.length ? 'No hay artículos con esa búsqueda.' : 'Todavía no hay artículos en el almacén.'}</div>`;
       };
@@ -104,8 +127,8 @@
     if (!puedeAlm('articulos')) return false;
     EPT.ventana({ titulo: 'Código no registrado', boton: 'Crear artículo nuevo',
       cuerpo: `<p style="margin:0">El código de barras <b>${esc(codigo)}</b> no está en el programa.</p>
-        <p class="mute" style="margin:0">Si es mercancía nueva, créela aquí y después le da ingreso.</p>`,
-      alGuardar: () => { editarArticulo(null, codigo); } });
+        <p class="mute" style="margin:0">Si es mercancía nueva, créela aquí y después regístrela en una factura de compra.</p>`,
+      alGuardar: () => { editarArticulo(null, { barras: codigo }); } });
     return true;
   };
 
@@ -116,18 +139,19 @@
       EPT.leer(sb.from('almacen_registros').select('fecha,tipo,antes,despues,nota,usuario:usuarios(nombre)').eq('producto_id', p.id).eq('tipo', 'traslado').order('fecha', { ascending: false }).limit(10)),
       EPT.leer(sb.from('historial_almacen_viejo').select('fecha,tipo,cantidad,presentacion,nota').eq('producto_id', p.id).order('fecha', { ascending: false }).limit(30)),
     ]);
-    const TIPO = { ingreso_almacen: 'Ingreso', despacho_persona: 'Despacho a una persona', transferencia_salida: 'Despacho a Repuestos', transferencia_diferencia: 'Diferencia de despacho',
-      ajuste: 'Ajuste', carga_inicial: 'Existencia inicial', importacion: 'Importación' };
+    const TIPO = { ingreso_almacen: 'Ingreso', despacho_persona: 'Despacho a una persona', devolucion_suplidor: 'Devolución al suplidor', transferencia_salida: 'Despacho a Repuestos',
+      transferencia_diferencia: 'Diferencia de despacho', ajuste: 'Ajuste', carga_inicial: 'Existencia inicial', importacion: 'Importación' };
     const hist = [
       ...movs.map(m => ({ f: m.fecha, t: `${TIPO[m.tipo] || m.tipo} ${Number(m.cantidad) > 0 ? '+' : ''}${num(m.cantidad)}`, n: m.nota, q: m.usuario?.nombre })),
       ...regs.map(r => ({ f: r.fecha, t: 'Traslado', n: `Estante ${r.antes || '—'} → ${r.despues || '—'}${r.nota ? ' · ' + r.nota : ''}`, q: r.usuario?.nombre })),
       ...viejo.map(h => ({ f: h.fecha, t: `${h.tipo} ${num(h.cantidad)}`, n: [h.presentacion, h.nota].filter(Boolean).join(' · '), q: 'programa anterior' })),
     ].sort((a, b) => String(b.f).localeCompare(String(a.f))).slice(0, 40);
+    // cada botón abre el documento con este artículo ya puesto (se le pueden agregar más)
     const botones = [
-      puedeAlm('ingreso') && ['ingreso', 'ingreso', 'Ingreso', 'prin'],
-      puedeAlm('despacho') && ['despacho', 'despacho', 'Despacho a una persona', ''],
+      puedeAlm('ingreso') && ['compra', 'ingreso', 'Factura de compra', 'prin'],
+      puedeAlm('despacho') && ['persona', 'despacho', 'Despacho a una persona', ''],
       puedeAlm('traslado') && ['traslado', 'traslado', 'Traslado', ''],
-      puedeAlm('ajustar') && ['ajustar', 'ajuste', 'Ajustar', 'liso'],
+      puedeAlm('ajustar') && ['conteo', 'ajuste', 'Ajustar', 'liso'],
       puedeAlm('articulos') && ['editar', '', 'Editar', 'liso'],
     ].filter(Boolean);
     EPT.ventana({
@@ -136,8 +160,12 @@
         <div class="existencia-grande"><b class="${bajo(p) ? 'txt-malo' : ''}">${num(p.hay)}</b> ${esc(p.unidad)} en el almacén
           ${Number(p.minimo) > 0 ? `<span class="mute">· mínimo ${num(p.minimo)}</span>` : ''}${bajo(p) ? ' <span class="estado malo">Bajo el mínimo</span>' : ''}</div>
         <dl class="datos">
+          <div><dt>Es</dt><dd>${esc(CLASE_ART[p.clase_articulo] || 'Pieza')}</dd></div>
           <div class="ancho"><dt>Familia · Subfamilia</dt><dd>${esc(F.nombre(p.subfamilia_id))}</dd></div>
           <div><dt>Estante</dt><dd>${esc(p.estante || '—')}</dd></div>
+          <div><dt>Precio de venta</dt><dd>${Number(p.precio) > 0 ? dinero(p.precio) : '<span class="txt-aviso">Sin precio</span>'}</dd></div>
+          ${puedeAlm('articulos') || puedeAlm('ingreso') ? `<div><dt>Último costo</dt><dd>${Number(p.ultimo_costo) > 0 ? dinero(p.ultimo_costo) : '—'}</dd></div>
+            <div><dt>Costo promedio</dt><dd>${Number(p.costo) > 0 ? dinero(p.costo) : '—'}</dd></div>` : ''}
           ${puedeAlm('articulos') ? '' : `<div><dt>Al cliente</dt><dd>${p.cobrable ? 'Se cobra' : 'No se cobra'}</dd></div>`}
           ${p.marca_pieza ? `<div><dt>Marca</dt><dd>${esc(p.marca_pieza)}</dd></div>` : ''}
           ${p.numero_parte ? `<div><dt>Referencia</dt><dd>${esc(p.numero_parte)}</dd></div>` : ''}
@@ -151,116 +179,74 @@
         <div class="campo">Movimientos<ul class="lista corta">${hist.length ? hist.map(h => `<li><div class="q"><b>${esc(h.t)}</b><span>${fecha(h.f)}${h.q ? ' · ' + esc(h.q) : ''}${h.n ? ' · ' + esc(h.n) : ''}</span></div></li>`).join('')
           : '<li><div class="q"><span>Sin movimientos todavía.</span></div></li>'}</ul></div>`,
       alAbrir(f, d) {
-        if (puedeAlm('articulos')) EPT.enlazarCobro(f, async v => {
-          await EPT.rpc('ept_producto_clasificar', { p_producto: p.id, p_subfamilia: p.subfamilia_id, p_cobrable: v });
-          p.cobrable = v; EPT.aviso(v ? 'Ahora se cobra al cliente' : 'Ahora no se cobra al cliente'); EPT.recargar();
+        if (puedeAlm('articulos')) EPT.enlazarCobro(f, async val => {
+          await EPT.rpc('ept_producto_clasificar', { p_producto: p.id, p_subfamilia: p.subfamilia_id, p_cobrable: val });
+          p.cobrable = val; EPT.aviso(val ? 'Ahora se cobra al cliente' : 'Ahora no se cobra al cliente'); EPT.recargar();
         });
-        f.querySelectorAll('[data-x]').forEach(b => b.addEventListener('click', () => {
+        f.querySelectorAll('[data-x]').forEach(b => b.addEventListener('click', async () => {
           d.close();
-          ({ ingreso: () => mover(p, 'ingreso'), despacho: () => mover(p, 'despacho'), traslado: () => trasladar(p), ajustar: () => ajustar(p), editar: () => editarArticulo(p) })[b.dataset.x]();
+          if (b.dataset.x === 'editar') return editarArticulo(p);
+          await EPT.ir(LISTA_DE[DOC[b.dataset.x].tipo]);
+          nuevoDocumento(b.dataset.x, [p.id]);
         }));
       },
     });
   }
 
-  // Ingreso, o despacho a una persona (la excepción: lo normal es despachar a Repuestos por requisición).
-  // Se puede anotar en unidades o en cajas/paquetes.
-  function mover(p, que) {
-    const ing = que === 'ingreso';
-    const emp = Number(p.empaque_unidades) > 1 && p.empaque_nombre;
-    EPT.ventana({
-      titulo: (ing ? 'Ingreso · ' : 'Despacho a una persona · ') + p.descripcion, boton: ing ? 'Registrar ingreso' : 'Registrar despacho',
-      cuerpo: `${ing ? '' : '<p class="alerta" style="margin:0">Lo normal es despachar a Repuestos por requisición. Use esto solo cuando algo tiene que salir hacia otra persona.</p>'}
-        <p class="mute" style="margin:0">Hay <b>${num(p.hay)}</b> ${esc(p.unidad)} en el almacén.</p>
-        <div class="dos"><label class="campo">Cantidad<input name="cant" type="number" min="0" step="any" inputmode="decimal" class="grande" required></label>
-          ${emp ? `<label class="campo">En<select name="en"><option value="1">${esc(p.unidad)}</option><option value="${p.empaque_unidades}">${esc(p.empaque_nombre)} de ${num(p.empaque_unidades)}</option></select></label>` : ''}</div>
-        <p class="mute" id="total" style="margin:-6px 0 0"></p>
-        ${ing ? '<label class="campo">¿De dónde vino? <small class="opc">(suplidor o factura, opcional)</small><input name="de" maxlength="120"></label>'
-          : '<label class="campo">¿A qué persona?<input name="para" maxlength="120" required placeholder="Nombre de quien lo recibe"></label>'}
-        <label class="campo">${ing ? 'Nota <small class="opc">(opcional)</small>' : 'Motivo'}<input name="nota" maxlength="200" ${ing ? '' : 'required placeholder="Ej. limpieza de la oficina"'}></label>`,
-      alAbrir(f) {
-        const tot = () => { const n = Number(f.cant.value || 0) * Number(f.en ? f.en.value : 1);
-          f.querySelector('#total').textContent = f.en && f.en.value !== '1' && n ? `Son ${num(n)} ${p.unidad}.` : ''; };
-        f.cant.addEventListener('input', tot); if (f.en) f.en.addEventListener('change', tot);
-      },
-      async alGuardar(f) {
-        const cant = Number(f.cant.value || 0), por = Number(f.en ? f.en.value : 1), total = cant * por;
-        if (!(cant > 0)) { f.cant.classList.add('falta'); f.cant.focus(); throw new Error(ing ? 'Escriba cuánto ingresa' : 'Escriba cuánto despacha'); }
-        const pres = por > 1 ? `${num(cant)} ${p.empaque_nombre.toLowerCase()} de ${num(por)}` : `${num(cant)} ${p.unidad}`;
-        if (ing) await EPT.rpc('ept_almacen_ingreso', { p_producto: p.id, p_cantidad: total, p_presentacion: pres, p_suplidor: f.de.value, p_nota: f.nota.value });
-        else {
-          if (!f.para.value.trim()) { f.para.classList.add('falta'); f.para.focus(); throw new Error('Escriba a qué persona se le despacha'); }
-          if (!f.nota.value.trim()) { f.nota.classList.add('falta'); f.nota.focus(); throw new Error('Escriba el motivo del despacho'); }
-          await EPT.rpc('ept_almacen_despacho', { p_producto: p.id, p_cantidad: total, p_presentacion: pres, p_para: f.para.value, p_nota: f.nota.value });
-        }
-        EPT.aviso(ing ? `Ingreso registrado: +${num(total)}` : `Despacho registrado: −${num(total)}`); EPT.recargar();
-      },
-    });
-  }
-
-  function trasladar(p) {
-    EPT.ventana({
-      titulo: 'Traslado · ' + p.descripcion, boton: 'Trasladar',
-      cuerpo: `<p class="mute" style="margin:0">Ahora está en el estante <b>${esc(p.estante || 'sin estante')}</b>. La existencia no cambia.</p>
-        <label class="campo">Estante nuevo<input name="estante" maxlength="40" required></label>
-        <label class="campo">Nota <small class="opc">(opcional)</small><input name="nota" maxlength="200"></label>`,
-      async alGuardar(f) {
-        if (!f.estante.value.trim()) { f.estante.classList.add('falta'); f.estante.focus(); throw new Error('Escriba el estante nuevo'); }
-        await EPT.rpc('ept_almacen_traslado', { p_producto: p.id, p_estante: f.estante.value, p_nota: f.nota.value });
-        EPT.aviso('Traslado registrado'); EPT.recargar();
-      },
-    });
-  }
-
-  function ajustar(p) {
-    EPT.ventana({
-      titulo: 'Ajustar · ' + p.descripcion, boton: 'Ajustar',
-      cuerpo: `<p class="mute" style="margin:0">El sistema dice <b>${num(p.hay)}</b>. Escriba cuántos hay de verdad (después de contar).</p>
-        <label class="campo">Hay de verdad<input name="real" type="number" min="0" step="any" inputmode="decimal" class="grande" required></label>
-        <p class="mute" id="dif" style="margin:-6px 0 0"></p>
-        <label class="campo">Motivo<input name="motivo" maxlength="200" required placeholder="Ej. conteo físico"></label>`,
-      alAbrir(f) { f.real.addEventListener('input', () => { const d = Number(f.real.value) - p.hay;
-        f.querySelector('#dif').textContent = f.real.value === '' || !d ? '' : `${d > 0 ? 'Sube' : 'Baja'} ${num(Math.abs(d))}.`; }); },
-      async alGuardar(f) {
-        if (f.real.value === '') { f.real.classList.add('falta'); f.real.focus(); throw new Error('Escriba cuántos hay'); }
-        const d = Number(f.real.value) - p.hay;
-        if (!d) throw new Error('Es lo mismo que dice el sistema: no hay nada que ajustar');
-        if (!f.motivo.value.trim()) { f.motivo.classList.add('falta'); f.motivo.focus(); throw new Error('Escriba el motivo del ajuste'); }
-        await EPT.rpc('ept_ajuste_inventario', { p_producto: p.id, p_ubicacion: 'almacen', p_cantidad: d, p_motivo: f.motivo.value });
-        EPT.aviso('Ajuste registrado'); EPT.recargar();
-      },
-    });
-  }
-
-  // Nuevo o editar. El estante se pone al crearlo; después se cambia con Traslado.
-  async function editarArticulo(p, barrasNuevo = '') {
+  // ---------- Crear o editar un artículo (como la ficha de artículo de Libra) ----------
+  // Al escribir el nombre de uno nuevo, el programa lo ubica solo en su familia (automática, CVT, mecánica, eléctrica…)
+  // y propone qué es (pieza, insumo, misceláneo o producto). Se puede cambiar.
+  // op: { barras, nombre, despues(r) } — despues recibe {id, codigo} del artículo guardado.
+  async function editarArticulo(p, op = {}) {
     const F = await EPT.cargarFamilias();
     const nuevo = !p;
-    // al crear desde una familia elegida en la pantalla, viene ya puesta
-    const subIni = p ? p.subfamilia_id : (subInv || (famInv ? F.subsDe(famInv)[0]?.id : ''));
+    const nombre0 = p ? p.descripcion : (op.nombre || '');
+    const subIni = p ? p.subfamilia_id : (nombre0 ? EPT.clasificar(nombre0, F) : (subInv || (famInv ? F.subsDe(famInv)[0]?.id : '')));
+    const claseDe = sid => CLASE_DE_FAMILIA[F.porSub.get(sid)?.familia.nombre] || 'pieza';
+    const clase0 = p ? p.clase_articulo || 'pieza' : (subIni ? claseDe(subIni) : 'pieza');
     EPT.ventana({
-      titulo: nuevo ? 'Nuevo artículo del almacén' : 'Editar ' + p.codigo, boton: 'Guardar',
+      titulo: nuevo ? 'Crear artículo' : 'Editar ' + p.codigo, boton: 'Guardar',
       cuerpo: `
-        <label class="campo">Nombre<input name="desc" maxlength="160" required value="${esc(p ? p.descripcion : '')}" placeholder="Ej. Aceite ATF Dexron VI, 1 cuarto"></label>
+        <label class="campo">Nombre<input name="desc" maxlength="160" required value="${esc(nombre0)}" placeholder="Ej. Solenoide de cambio A, 4L60E"></label>
+        <div class="campo">¿Qué es?
+          <div class="seg clase-art" role="group" aria-label="Qué es">${Object.entries(CLASE_ART).map(([k, t]) => `<button type="button" data-cl="${k}" aria-pressed="${k === clase0}">${t}</button>`).join('')}</div>
+          <input type="hidden" name="clase" value="${clase0}"></div>
         <div class="dos">${EPT.selectFamilias(F, subIni)}</div>
+        <p class="pista" id="ubicado" ${nuevo && subIni ? '' : 'hidden'}>El programa lo ubicó en <b id="ubicadoEn">${esc(F.nombre(subIni))}</b>. Si no es ahí, cámbielo.</p>
         <p class="mute" style="margin:-6px 0 0"><button type="button" class="liso peque" id="btnNuevaSub">${icono('mas')}Agregar una familia o subfamilia</button></p>
         ${EPT.botonesCobro(p ? p.cobrable : null, { etiqueta: 'Cuando se usa en una orden' })}
+        <div class="dos"><label class="campo">Precio de venta RD$<input name="precio" type="number" min="0" step="any" inputmode="decimal" value="${p && Number(p.precio) > 0 ? p.precio : ''}"></label>
+          ${p ? `<div class="campo">Costo <small class="opc">(lo ponen las facturas de compra)</small><span class="valor-fijo">Último ${Number(p.ultimo_costo) > 0 ? dinero(p.ultimo_costo) : '—'} · Promedio ${Number(p.costo) > 0 ? dinero(p.costo) : '—'}</span></div>` : '<div></div>'}</div>
         <div class="dos"><label class="campo">Marca <small class="opc">(opcional)</small><input name="marca" maxlength="60" value="${esc(p ? p.marca_pieza : '')}"></label>
           <label class="campo">Referencia <small class="opc">(opcional)</small><input name="ref" maxlength="60" value="${esc(p ? p.numero_parte : '')}"></label></div>
         <div class="dos"><label class="campo">Unidad<select name="unidad">${['UNID', 'GALÓN', 'LITRO', 'CUARTO', 'PAR', 'JUEGO', 'PIE', 'METRO', 'LIBRA', 'CAJAS'].map(u => `<option ${u === (p ? p.unidad : 'UNID') ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
           <label class="campo">Mínimo de reposición<input name="minimo" type="number" min="0" step="any" inputmode="decimal" value="${p ? Number(p.minimo) || '' : ''}"></label></div>
         <div class="dos"><label class="campo">Empaque <small class="opc">(opcional)</small><select name="emp"><option value="">Ninguno</option>${['Caja', 'Paquete', 'Docena'].map(e => `<option ${p && p.empaque_nombre === e ? 'selected' : ''}>${e}</option>`).join('')}</select></label>
           <label class="campo">Unidades por empaque<input name="porEmp" type="number" min="1" step="1" inputmode="numeric" value="${p && Number(p.empaque_unidades) > 1 ? p.empaque_unidades : ''}"></label></div>
-        ${nuevo ? `<div class="dos"><label class="campo">Estante <small class="opc">(opcional)</small><input name="estante" maxlength="40"></label>
-          <label class="campo">Existencia de hoy <small class="opc">(lo que hay)</small><input name="ini" type="number" min="0" step="any" inputmode="decimal"></label></div>` : ''}
-        <div class="dos"><label class="campo">Código <small class="opc">${nuevo ? '(vacío = se pone solo, ej. ACE-001)' : ''}</small><input name="codigo" maxlength="30" value="${esc(p ? p.codigo : '')}" ${nuevo ? '' : 'disabled'}></label>
-          <label class="campo">Código de barras <small class="opc">(opcional)</small><input name="barras" maxlength="40" value="${esc(p ? p.codigo_barras : barrasNuevo)}" placeholder="Escanéelo aquí"></label></div>
-        <label class="campo">Notas <small class="opc">(opcional)</small><input name="notas" maxlength="300" value="${esc(p ? p.notas : '')}"></label>`,
+        ${nuevo ? `<label class="campo">Estante <small class="opc">(opcional)</small><input name="estante" maxlength="40"></label>` : ''}
+        <div class="dos"><label class="campo">Código <small class="opc">${nuevo ? '(vacío = se pone solo, ej. SOL-001)' : ''}</small><input name="codigo" maxlength="30" value="${esc(p ? p.codigo : '')}" ${nuevo ? '' : 'disabled'}></label>
+          <label class="campo">Código de barras <small class="opc">(opcional)</small><input name="barras" maxlength="40" value="${esc(p ? p.codigo_barras : op.barras || '')}" placeholder="Escanéelo aquí"></label></div>
+        <label class="campo">Notas <small class="opc">(opcional)</small><input name="notas" maxlength="300" value="${esc(p ? p.notas : '')}"></label>
+        ${nuevo ? '<p class="mute" style="margin:0">La existencia entra con una factura de compra o un ingreso interno.</p>' : ''}`,
       alAbrir(f, d) {
-        // al elegir familia en un artículo nuevo, se marca solo si se cobra (se puede cambiar)
         EPT.enlazarCobro(f);
-        EPT.enlazarFamilias(F, f);
-        f.querySelector('#btnNuevaSub').addEventListener('click', () => { d.close(); nuevaSubfamilia(F, () => editarArticulo(p)); });
+        const segClase = [...f.querySelectorAll('.clase-art [data-cl]')];
+        const ponerClase = k => { f.clase.value = k; segClase.forEach(b => b.setAttribute('aria-pressed', b.dataset.cl === k)); };
+        segClase.forEach(b => b.addEventListener('click', () => { ponerClase(b.dataset.cl); claseTocada = true; }));
+        let familiaTocada = !nuevo, claseTocada = !nuevo;
+        EPT.enlazarFamilias(F, f, (fam, sub) => { familiaTocada = true; f.querySelector('#ubicado').hidden = true; if (!claseTocada && sub) ponerClase(claseDe(sub)); });
+        // mientras escribe el nombre de uno nuevo, el programa lo va ubicando (hasta que la persona elija a mano)
+        if (nuevo) f.desc.addEventListener('input', () => {
+          if (familiaTocada) return;
+          const sid = EPT.clasificar(f.desc.value, F); if (!sid) return;
+          const s = F.porSub.get(sid);
+          f.familia.value = s.familia_id;
+          f.subfamilia.innerHTML = F.subsDe(s.familia_id).map(x => `<option value="${x.id}">${esc(x.nombre)}</option>`).join('');
+          f.subfamilia.value = sid;
+          f.querySelector('#ubicadoEn').textContent = F.nombre(sid); f.querySelector('#ubicado').hidden = false;
+          if (!claseTocada) ponerClase(claseDe(sid));
+        });
+        f.querySelector('#btnNuevaSub').addEventListener('click', () => { d.close(); nuevaSubfamilia(F, () => editarArticulo(p, op)); });
       },
       async alGuardar(f) {
         if (!f.desc.value.trim()) { f.desc.classList.add('falta'); f.desc.focus(); throw new Error('Escriba el nombre'); }
@@ -268,10 +254,12 @@
         if (f.emp.value && !(Number(f.porEmp.value) > 1)) { f.porEmp.classList.add('falta'); f.porEmp.focus(); throw new Error('Escriba cuántas unidades trae cada ' + f.emp.value.toLowerCase()); }
         const r = await EPT.rpc('ept_almacen_articulo_guardar', { p: {
           id: p ? p.id : null, codigo: nuevo ? f.codigo.value : undefined, descripcion: f.desc.value, subfamilia_id: f.subfamilia.value, cobrable: EPT.seCobra(f),
-          unidad: f.unidad.value, marca_pieza: f.marca.value, numero_parte: f.ref.value, minimo: f.minimo.value,
+          clase_articulo: f.clase.value, precio: f.precio.value, unidad: f.unidad.value, marca_pieza: f.marca.value, numero_parte: f.ref.value, minimo: f.minimo.value,
           empaque_nombre: f.emp.value, empaque_unidades: f.emp.value ? f.porEmp.value : 1, codigo_barras: f.barras.value, notas: f.notas.value,
-          estante: nuevo ? f.estante.value : undefined, existencia_inicial: nuevo ? f.ini.value : undefined } });
-        EPT.aviso(nuevo ? `Artículo creado: ${r.codigo}` : 'Artículo guardado'); EPT.recargar();
+          estante: nuevo ? f.estante.value : undefined } });
+        EPT.olvidar('productos');
+        EPT.aviso(nuevo ? `Artículo creado: ${r.codigo}` : 'Artículo guardado');
+        if (op.despues) op.despues(r); else EPT.recargar();
       },
     });
   }
@@ -291,31 +279,380 @@
   }
 
   // =====================================================================
-  // Requisiciones: lo que Repuestos le pide al Almacén
+  // Documentos (albaranes): listas por tipo
   // =====================================================================
-  let filtroReq = 'abiertas';
+  const cargarDocs = tipo => EPT.leer(sb.from('almacen_documentos')
+    .select('id,tipo,clase,serie,numero,fecha,suplidor,numero_factura,ncf,para,motivo,total,usuario:usuarios(nombre),lineas:almacen_documento_lineas(producto:productos(codigo,descripcion))')
+    .eq('tipo', tipo).order('fecha', { ascending: false }).limit(300));
+  const textoDoc = d => EPT.llano([codDoc(d), d.suplidor, d.numero_factura, d.ncf, d.para, d.motivo, d.usuario?.nombre,
+    ...(d.lineas || []).flatMap(l => [l.producto?.codigo, l.producto?.descripcion])].join(' '));
+  const cuantos = n => `${n} artículo${n === 1 ? '' : 's'}`;
+  const busquedas = {};
+
+  // Una lista de documentos con buscador; "items" ya viene armada: {codigo, titulo, sub, chip, texto, abrir}
+  function pintarLista(v, clave, items, vacio, filtros) {
+    let filtro = (filtros && busquedas[clave + ':f']) || (filtros ? filtros[0][0] : '');
+    v.innerHTML = `<div class="fila" style="margin-bottom:14px">
+        ${filtros ? `<div class="seg" role="group">${filtros.map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === filtro}">${esc(t)}</button>`).join('')}</div>` : ''}
+        <div class="buscador">${icono('buscar')}<input type="search" id="bDocs" value="${esc(busquedas[clave] || '')}" placeholder="Número, artículo, suplidor, factura o persona"></div></div>
+      <div class="panel" id="listaDocs"></div>`;
+    const caja = v.querySelector('#listaDocs');
+    const pintar = () => {
+      const pal = EPT.llano((busquedas[clave] || '').trim()).split(/\s+/).filter(Boolean);
+      const ls = items.filter(x => (!filtros || filtro === filtros[0][0] || x.filtro === filtro) && pal.every(w => x.texto.includes(w)));
+      caja.innerHTML = ls.length ? `<ul class="lista">${ls.map((x, i) => `<li class="toca" data-i="${items.indexOf(x)}"><span class="serie">${esc(x.codigo)}</span>
+          <div class="q"><b>${esc(x.titulo)}</b><span>${esc(x.sub)}</span></div>${x.chip || ''}</li>`).join('')}</ul>`
+        : `<div class="vacio">${items.length ? 'No se encontró nada con esa búsqueda.' : esc(vacio)}</div>`;
+    };
+    let t; v.querySelector('#bDocs').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { busquedas[clave] = e.target.value; pintar(); }, 150); });
+    v.querySelectorAll('.seg [data-f]').forEach(b => b.addEventListener('click', () => {
+      filtro = busquedas[clave + ':f'] = b.dataset.f; v.querySelectorAll('.seg [data-f]').forEach(x => x.setAttribute('aria-pressed', x === b)); pintar();
+    }));
+    caja.addEventListener('click', e => { const li = e.target.closest('[data-i]'); if (li) items[li.dataset.i].abrir(); });
+    pintar();
+  }
+  const itemDoc = (d, titulo) => ({
+    codigo: codDoc(d), titulo, chip: '<span class="estado ok">Registrado</span>', filtro: d.clase,
+    sub: `${DOC[d.clase].corto} · ${cuantos((d.lineas || []).length)}${Number(d.total) > 0 ? ' · ' + dinero(d.total) : ''} · ${fecha(d.fecha)}${d.usuario ? ' · ' + d.usuario.nombre : ''}`,
+    texto: textoDoc(d), abrir: () => abrirDocumento(d.id),
+  });
+  const botonNuevo = (texto, clase) => {
+    EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevoDoc">${icono('mas')}${esc(texto)}</button>`;
+    EPT.$('#btnNuevoDoc').addEventListener('click', () => nuevoDocumento(clase));
+  };
+
   EPT.pantalla({
-    id: 'requisiciones', titulo: 'Requisiciones', subtitulo: 'Lo que Repuestos le pide al Almacén',
-    icono: 'deposito', grupo: 'Almacén', atajo: 'Requisiciones',
-    ver: () => ['almacen.resolver', 'almacen.transferir', 'repuestos.requisicion', 'almacen.diferencia'].some(p => EPT.puede(p)),
+    id: 'alm_ingresos', titulo: 'Albaranes de entrada', pestana: 'Albaranes de entrada', grupo: 'Almacén', icono: 'ingreso', peso: 2,
+    explica: 'Todo lo que ENTRA al almacén: facturas de compra de los suplidores (suman la existencia y ponen el costo al día) e ingresos internos.',
+    ver: () => puedeAlm('ingreso') || EPT.puede('reportes.ver'),
     async mostrar(v) {
-      const q = sb.from('requisiciones').select('id,numero,estado,fecha,motivo,orden:ordenes(numero),creador:usuarios!requisiciones_creado_por_fkey(nombre),lineas:requisicion_lineas(id)').order('numero', { ascending: false }).limit(200);
-      const filas = await EPT.leer(filtroReq === 'abiertas' ? q.in('estado', ['nueva', 'pendiente', 'aprobada', 'parcial']) : q);
-      const c = k => filas.filter(r => r.estado === k).length;
-      v.innerHTML = `<div class="fila" style="margin-bottom:14px"><div class="seg" role="group">
-          <button type="button" data-f="abiertas" aria-pressed="${filtroReq === 'abiertas'}">Por atender</button>
-          <button type="button" data-f="todas" aria-pressed="${filtroReq === 'todas'}">Todas</button></div>
-          ${filtroReq === 'abiertas' ? `<div class="contadores" style="margin:0"><span><b>${c('nueva') + c('pendiente')}</b> por decidir</span><span><b>${c('aprobada') + c('parcial')}</b> aprobadas por despachar</span></div>` : ''}</div>
-        <div class="panel">${filas.length ? `<ul class="lista">${filas.map(r => `<li class="toca" data-r="${r.id}">
-          <div class="q"><b>${rn(r.numero)}${r.orden ? ' · ' + ot(r.orden.numero) : ''}</b>
-            <span>${r.lineas.length} pieza${r.lineas.length === 1 ? '' : 's'} · ${esc(r.creador?.nombre || '')} · ${fecha(r.fecha)}${r.motivo ? ' · ' + esc(r.motivo) : ''}</span></div>${chip(REQ, r.estado)}</li>`).join('')}</ul>`
-          : '<div class="vacio">No hay requisiciones por atender.</div>'}</div>`;
-      v.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { filtroReq = b.dataset.f; EPT.recargar(); }));
-      v.querySelectorAll('[data-r]').forEach(li => li.addEventListener('click', () => abrirRequisicion(li.dataset.r)));
+      if (puedeAlm('ingreso')) botonNuevo('Nuevo ingreso', 'compra');
+      const docs = await cargarDocs('ingreso');
+      pintarLista(v, 'in', docs.map(d => itemDoc(d, d.clase === 'compra'
+        ? `${d.suplidor} · ${d.numero_factura}${d.ncf ? ' · NCF ' + d.ncf : ''}` : d.motivo || 'Ingreso interno')),
+        'Todavía no hay ingresos. Toque «Nuevo ingreso» para registrar una factura de compra.',
+        [['todos', 'Todos'], ['compra', 'Facturas de compra'], ['interno', 'Internos']]);
     },
   });
 
+  EPT.pantalla({
+    id: 'alm_despachos', titulo: 'Albaranes de salida', pestana: 'Albaranes de salida', grupo: 'Almacén', icono: 'despacho', peso: 3,
+    explica: 'Todo lo que SALE del almacén: a Repuestos por requisición (D), a una persona (DP) o devuelto al suplidor (DS).',
+    ver: () => ['almacen.despacho', 'almacen.transferir', 'almacen.diferencia', 'reportes.ver'].some(p => EPT.puede(p)),
+    async mostrar(v) {
+      if (puedeAlm('despacho')) botonNuevo('Nuevo despacho', 'persona');
+      const [docs, trans] = await Promise.all([cargarDocs('despacho'),
+        EPT.leer(sb.from('transferencias').select('id,numero,estado,fecha_envio,fecha_recibo,requisicion:requisiciones(numero,orden:ordenes(numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(producto:productos(codigo,descripcion))').order('numero', { ascending: false }).limit(300))]);
+      const items = [
+        ...trans.map(t => ({ f: t.fecha_envio, codigo: dn(t.numero), filtro: 'repuestos', chip: chip(DES, t.estado),
+          titulo: `Para Repuestos${t.requisicion ? ' · ' + rn(t.requisicion.numero) : ''}${t.requisicion?.orden ? ' · ' + ot(t.requisicion.orden.numero) + ' ' + [t.requisicion.orden.vehiculo?.marca, t.requisicion.orden.vehiculo?.modelo].filter(Boolean).join(' ') : ' · reposición'}`,
+          sub: `${cuantos(t.lineas.length)} · ${fecha(t.fecha_envio)}${t.fecha_recibo ? ' · ingresó ' + fecha(t.fecha_recibo) : ''}`,
+          texto: EPT.llano([dn(t.numero), 'repuestos', t.requisicion && rn(t.requisicion.numero), t.requisicion?.orden && ot(t.requisicion.orden.numero), ...t.lineas.flatMap(l => [l.producto?.codigo, l.producto?.descripcion])].join(' ')),
+          abrir: () => abrirDespacho(t.id) })),
+        ...docs.map(d => ({ f: d.fecha, ...itemDoc(d, d.clase === 'persona' ? `Para ${d.para} · ${d.motivo}` : `Devolución a ${d.suplidor} · ${d.motivo}`) })),
+      ].sort((a, b) => String(b.f).localeCompare(String(a.f)));
+      pintarLista(v, 'out', items, 'Todavía no hay despachos.',
+        [['todos', 'Todos'], ['repuestos', 'A Repuestos'], ['persona', 'A una persona'], ['suplidor', 'Al suplidor']]);
+    },
+  });
+
+  EPT.pantalla({
+    id: 'alm_traslados', titulo: 'Traslados', pestana: 'Traslados', grupo: 'Almacén', icono: 'traslado', peso: 4,
+    explica: 'Cambiar artículos de estante dentro del almacén. La cantidad no cambia.',
+    ver: () => puedeAlm('traslado') || EPT.puede('reportes.ver'),
+    async mostrar(v) {
+      if (puedeAlm('traslado')) botonNuevo('Nuevo traslado', 'traslado');
+      const docs = await cargarDocs('traslado');
+      pintarLista(v, 'tr', docs.map(d => itemDoc(d, d.motivo || 'Cambio de estante')), 'Todavía no hay traslados.');
+    },
+  });
+
+  EPT.pantalla({
+    id: 'alm_ajustes', titulo: 'Ajustes', pestana: 'Ajustes', grupo: 'Almacén', icono: 'ajuste', peso: 5,
+    explica: 'Corregir la existencia después de contar (toma de inventario): se escribe lo contado y el programa ajusta la diferencia.',
+    ver: () => puedeAlm('ajustar') || EPT.puede('reportes.ver'),
+    async mostrar(v) {
+      if (puedeAlm('ajustar')) botonNuevo('Nuevo ajuste', 'conteo');
+      const docs = await cargarDocs('ajuste');
+      pintarLista(v, 'aj', docs.map(d => itemDoc(d, d.motivo)), 'Todavía no hay ajustes.');
+    },
+  });
+
+  // =====================================================================
+  // Documento nuevo: 1) cabecera  2) artículos (escanear o buscar)  3) guardar
+  // =====================================================================
+  async function nuevoDocumento(clase, conArticulos = []) {
+    const D = DOC[clase];
+    if (!puedeAlm(D.permiso)) { EPT.aviso('No tiene permiso para esto', true); return; }
+    const [arts, F, sups] = await Promise.all([cargarInventario(), EPT.cargarFamilias(),
+      D.tipo === 'ingreso' || clase === 'suplidor' ? EPT.leer(sb.from('almacen_documentos').select('suplidor').neq('suplidor', '').order('fecha', { ascending: false }).limit(300)) : []]);
+    let todos = arts.filter(p => p.activo);
+    const lista = EPT.alfabetico(todos);
+    const suplidores = [...new Set(sups.map(s => s.suplidor))].sort((a, b) => a.localeCompare(b, 'es'));
+    const lineas = [];   // { p, cant, por (unidades por empaque), costo, estante, contado }
+    const v = EPT.$('#vista');
+    const hermanas = D.tipo === 'ingreso' ? ['compra', 'interno'] : D.tipo === 'despacho' ? ['persona', 'suplidor'] : [clase];
+    EPT.$('#subtitulo').textContent = 'Nuevo · ' + D.nombre;
+    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnCancelarDoc">Cancelar</button>`;
+    EPT.$('#btnCancelarDoc').addEventListener('click', () => EPT.ir(LISTA_DE[D.tipo]));
+    const hoy = new Date(); const hoyTxt = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+    const cabecera = {
+      compra: `<div class="cab3"><label class="campo">Suplidor<input name="suplidor" list="lSups" maxlength="120" required placeholder="Nombre del suplidor"></label>
+          <label class="campo">Documento<select name="doc_suplidor"><option>Factura</option><option>Conduce</option></select></label>
+          <label class="campo">Número<input name="numero_factura" maxlength="40" required placeholder="Número de la factura"></label></div>
+        <div class="cab3"><label class="campo">NCF <small class="opc">(si trae)</small><input name="ncf" maxlength="19" autocapitalize="characters" placeholder="B0100000000"></label>
+          <label class="campo">Fecha de la factura<input name="fecha_factura" type="date" value="${hoyTxt}"></label><div></div></div>`,
+      interno: `<label class="campo">¿Por qué entra?<input name="motivo" maxlength="200" required placeholder="Ej. sobrante encontrado, regalo del suplidor"></label>`,
+      persona: `<p class="alerta" style="margin:0">Lo normal es despachar a Repuestos por requisición. Use esto solo cuando algo tiene que salir hacia otra persona.</p>
+        <div class="dos"><label class="campo">¿A qué persona?<input name="para" maxlength="120" required placeholder="Nombre de quien lo recibe"></label>
+          <label class="campo">Motivo<input name="motivo" maxlength="200" required placeholder="Ej. limpieza de la oficina"></label></div>`,
+      suplidor: `<div class="dos"><label class="campo">Suplidor<input name="suplidor" list="lSups" maxlength="120" required></label>
+          <label class="campo">Factura que se devuelve <small class="opc">(opcional)</small><input name="numero_factura" maxlength="40"></label></div>
+        <label class="campo">¿Por qué se devuelve?<input name="motivo" maxlength="200" required placeholder="Ej. vino dañado, no era la pieza"></label>`,
+      traslado: `<label class="campo">Nota <small class="opc">(opcional)</small><input name="motivo" maxlength="200" placeholder="Ej. reorganización del pasillo B"></label>`,
+      conteo: `<label class="campo">Motivo<input name="motivo" maxlength="200" required value="Conteo físico"></label>`,
+    }[clase];
+    v.innerHTML = `<div class="panel"><div class="cuerpo doc-nuevo">
+      ${hermanas.length > 1 ? `<div class="seg" role="group" style="margin-bottom:6px">${hermanas.map(k => `<button type="button" data-cl="${k}" aria-pressed="${k === clase}">${esc(DOC[k].nombre)}</button>`).join('')}</div>` : ''}
+      <form id="fDoc" novalidate>
+        <div class="paso-doc"><i>1</i>${{ compra: '¿De qué suplidor y qué factura?', interno: '¿Por qué entra?', persona: '¿Para quién y por qué?', suplidor: '¿A qué suplidor y por qué?', traslado: 'Nota', conteo: '¿Por qué se cuenta?' }[clase]}</div>
+        ${cabecera}
+        <datalist id="lSups">${suplidores.map(s => `<option value="${esc(s)}">`).join('')}</datalist>
+        <div class="paso-doc"><i>2</i>${D.tipo === 'ingreso' ? '¿Qué llegó?' : D.tipo === 'despacho' ? '¿Qué sale?' : D.tipo === 'traslado' ? '¿Qué cambia de estante?' : '¿Qué contó?'} Escanee o busque cada artículo</div>
+        <div class="busca-doc">${EPT.campoPieza('id="bArt"')}</div>
+        <div class="desliza"><table class="tabla doc-lineas" id="tLineas"></table></div>
+        <div id="totales"></div>
+        <div class="paso-doc"><i>3</i>Revise y guarde</div>
+        <p class="error" role="alert" id="errDoc"></p>
+        <button type="submit" class="prin grande-btn" id="btnGuardarDoc">Guardar</button>
+      </form></div></div>`;
+    v.querySelectorAll('[data-cl]').forEach(b => b.addEventListener('click', () => { if (b.dataset.cl !== clase) nuevoDocumento(b.dataset.cl, lineas.map(l => l.p.id)); }));
+    const f = v.querySelector('#fDoc'), tabla = v.querySelector('#tLineas'), bArt = v.querySelector('#bArt');
+    const conCosto = clase === 'compra';
+    const emp = p => Number(p.empaque_unidades) > 1 && p.empaque_nombre;
+
+    const agregar = p => {
+      if (!p) return;
+      if (!todos.some(x => x.id === p.id)) { EPT.aviso(`${p.codigo} no es del almacén`, true); return; }
+      let l = lineas.find(x => x.p.id === p.id);
+      if (l) { if (D.tipo !== 'traslado' && D.tipo !== 'ajuste') l.cant = Number(l.cant || 0) + 1; }
+      else { l = { p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', estante: '', contado: '' }; lineas.push(l); }
+      pintar();
+      const inp = tabla.querySelector(`tr[data-pid="${p.id}"] input`); if (inp) { inp.focus(); inp.select(); }
+    };
+    // La tabla se dibuja al agregar o quitar un artículo (o cambiar el empaque). Mientras se escribe, solo se
+    // actualizan los números calculados, así el cursor no se pierde al pasar de un campo a otro.
+    const unidadCosto = l => (l.por > 1 ? l.p.empaque_nombre : l.p.unidad).toLowerCase();
+    const pintar = () => {
+      const cab = { ingreso: `<th>Artículo</th><th>Hay ahora</th><th>Cantidad</th><th>En</th>${conCosto ? '<th>Costo</th><th style="text-align:right">Importe</th>' : ''}`,
+        despacho: '<th>Artículo</th><th>Hay ahora</th><th>Cantidad</th><th>En</th>',
+        traslado: '<th>Artículo</th><th>Está en</th><th>Estante nuevo</th>',
+        ajuste: '<th>Artículo</th><th>Dice el programa</th><th>Contado</th><th>Diferencia</th>' }[D.tipo];
+      tabla.innerHTML = lineas.length ? `<thead><tr>${cab}<th></th></tr></thead><tbody>${lineas.map(l => {
+        const p = l.p, art = `<td><b>${esc(p.descripcion)}</b> <small class="mute">${esc(p.codigo)}</small></td>`;
+        const enSel = emp(p) ? `<select class="por"><option value="1" ${l.por == 1 ? 'selected' : ''}>${esc(p.unidad)}</option><option value="${p.empaque_unidades}" ${l.por != 1 ? 'selected' : ''}>${esc(p.empaque_nombre)} de ${num(p.empaque_unidades)}</option></select>` : esc(p.unidad);
+        const cant = `<td><input class="cant c" type="number" min="0" step="any" inputmode="decimal" value="${l.cant}" aria-label="Cantidad"></td>`;
+        const celdas = {
+          ingreso: `${art}<td>${num(p.hay)}</td>${cant}<td>${enSel}<br><small class="mute eq"></small></td>
+            ${conCosto ? `<td><input class="cant costo" type="number" min="0" step="any" inputmode="decimal" value="${l.costo}" aria-label="Costo"><br><small class="mute">por ${esc(unidadCosto(l))}</small></td>
+            <td class="imp" style="text-align:right"></td>` : ''}`,
+          despacho: `${art}<td class="hay">${num(p.hay)}</td>${cant}<td>${enSel}<br><small class="mute eq"></small></td>`,
+          traslado: `${art}<td>${esc(p.estante || 'sin estante')}</td><td><input class="cant est" maxlength="40" value="${esc(l.estante)}" style="width:120px" aria-label="Estante nuevo"></td>`,
+          ajuste: `${art}<td>${num(p.hay)}</td>${cant}<td class="dif"></td>`,
+        }[D.tipo];
+        return `<tr data-pid="${p.id}">${celdas}<td><button type="button" class="liso peque" data-quitar aria-label="Quitar">Quitar</button></td></tr>`; }).join('')}</tbody>`
+        : '<tbody><tr><td class="vacio" style="padding:18px">Todavía no hay artículos. Escanee o escriba arriba.</td></tr></tbody>';
+      v.querySelector('#btnGuardarDoc').textContent = `Guardar ${D.nombre.toLowerCase()}${lineas.length ? ` (${cuantos(lineas.length)})` : ''}`;
+      if (conCosto) pintarTotales();
+      calcular();
+    };
+    // números calculados de cada renglón y el total de la factura
+    const calcular = () => {
+      for (const l of lineas) {
+        const tr = tabla.querySelector(`tr[data-pid="${l.p.id}"]`); if (!tr) continue;
+        const total = Number(l.cant || 0) * Number(l.por || 1);
+        const eq = tr.querySelector('.eq'); if (eq) eq.textContent = l.por > 1 && total ? `= ${num(total)} ${l.p.unidad}` : '';
+        const imp = tr.querySelector('.imp'); if (imp) imp.textContent = dinero(Number(l.cant || 0) * Number(l.costo || 0));
+        const hay = tr.querySelector('.hay'); if (hay) hay.classList.toggle('txt-malo', total > l.p.hay);
+        const dif = tr.querySelector('.dif');
+        if (dif) { const d = Number(l.cant) - l.p.hay; dif.innerHTML = l.cant === '' ? '—' : `<b class="${d > 0 ? 'txt-ok' : d < 0 ? 'txt-malo' : 'mute'}">${d > 0 ? '+' : ''}${num(d)}</b>`; }
+      }
+      if (conCosto) calcularTotales();
+    };
+    // totales de la factura de compra: el ITBIS se calcula al 18 % salvo que se escriba a mano
+    let itbisMano = null, conItbis = true;
+    const subtotal = () => lineas.reduce((a, l) => a + Math.round(Number(l.cant || 0) * Number(l.costo || 0) * 100) / 100, 0);
+    const itbisDe = sub => !conItbis ? 0 : itbisMano != null ? itbisMano : Math.round(sub * 18) / 100;
+    const pintarTotales = () => {
+      const caja = v.querySelector('#totales');
+      caja.innerHTML = `<div class="totales-doc">
+        <div>Subtotal <b class="sub"></b></div>
+        <label class="check"><input type="checkbox" name="llevaItbis" ${conItbis ? 'checked' : ''}> <span>La factura trae ITBIS</span></label>
+        <label class="campo-linea">ITBIS RD$<input name="itbis" type="number" min="0" step="any" inputmode="decimal" ${conItbis ? '' : 'disabled'}></label>
+        <div class="total">Total de la factura <b class="tot"></b></div></div>`;
+      caja.querySelector('[name=llevaItbis]').addEventListener('change', e => { conItbis = e.target.checked; caja.querySelector('[name=itbis]').disabled = !conItbis; calcularTotales(); });
+      caja.querySelector('[name=itbis]').addEventListener('input', e => { itbisMano = e.target.value === '' ? null : Number(e.target.value); calcularTotales(true); });
+    };
+    const calcularTotales = (escribiendo) => {
+      const caja = v.querySelector('#totales'); const sub = subtotal(), it = itbisDe(sub);
+      caja.querySelector('.sub').textContent = dinero(sub);
+      if (!escribiendo) caja.querySelector('[name=itbis]').value = conItbis ? it : 0;
+      caja.querySelector('.tot').textContent = dinero(sub + it);
+    };
+    // lo que se escribe en la tabla se guarda en "lineas"
+    tabla.addEventListener('input', e => {
+      const tr = e.target.closest('tr[data-pid]'); if (!tr) return;
+      const l = lineas.find(x => x.p.id === tr.dataset.pid);
+      if (e.target.classList.contains('c')) l.cant = e.target.value;
+      if (e.target.classList.contains('costo')) l.costo = e.target.value;
+      if (e.target.classList.contains('est')) l.estante = e.target.value;
+      calcular();
+    });
+    // cambiar de unidad a empaque cambia lo que significa el costo: se vuelve a dibujar ese renglón
+    tabla.addEventListener('change', e => {
+      if (!e.target.classList.contains('por')) return;
+      const l = lineas.find(x => x.p.id === e.target.closest('tr').dataset.pid);
+      l.por = Number(e.target.value); pintar();
+      const s = tabla.querySelector(`tr[data-pid="${l.p.id}"] .por`); if (s) s.focus();
+    });
+    // Enter en una cantidad vuelve al buscador, listo para el siguiente artículo
+    tabla.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); e.target.blur(); bArt.focus(); } });
+    tabla.addEventListener('click', e => {
+      const b = e.target.closest('[data-quitar]'); if (!b) return;
+      const i = lineas.findIndex(x => x.p.id === b.closest('tr').dataset.pid); lineas.splice(i, 1); pintar();
+    });
+
+    // buscador: solo artículos del almacén; si no existe y es un ingreso, se ofrece crearlo ahí mismo, dentro de la
+    // misma lista (el programa lo ubica solo en su familia)
+    const crearAqui = D.tipo === 'ingreso' && puedeAlm('articulos');
+    EPT.sugerencias(v.querySelector('.busca-doc'), lista, {
+      libre: false,
+      alElegir: (inp, p) => { inp.value = ''; agregar(p && todos.find(x => x.id === p.id)); },
+      nada: crearAqui ? txt => txt.length < 3 ? '' : `<span>«${esc(txt)}» no está en el almacén.</span>
+          <button type="button" class="peque prin" data-nada>${icono('mas')}Crear artículo nuevo</button><span class="mute">El programa lo ubica solo en su familia.</span>` : null,
+      alNada: (txt, inp) => editarArticulo(null, { nombre: txt, despues: async r => {
+        todos = (await cargarInventario()).filter(p => p.activo);
+        const nuevo = todos.find(p => p.id === r.id); lista.push(nuevo);
+        inp.value = ''; agregar(nuevo);
+      } }),
+    });
+    // lo escaneado con el cursor fuera del buscador también se agrega a este documento
+    EPT.alEscanear = p => { if (!document.body.contains(f)) return false; const x = todos.find(y => y.id === p.id); if (!x) return false; agregar(x); return true; };
+    conArticulos.forEach(id => { const p = todos.find(x => x.id === id); if (p) lineas.push({ p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', estante: '', contado: '' }); });
+    pintar();
+    (f.querySelector('input:not([type=hidden])') || bArt).focus();
+
+    f.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const err = v.querySelector('#errDoc'), bt = v.querySelector('#btnGuardarDoc'); err.textContent = '';
+      try {
+        f.querySelectorAll('[required]').forEach(x => { if (!x.value.trim()) { x.classList.add('falta'); x.focus(); throw new Error('Llene lo que está marcado en rojo'); } });
+        if (!lineas.length) { bArt.focus(); throw new Error('Agregue al menos un artículo'); }
+        for (const l of lineas) {
+          const total = Number(l.cant || 0) * Number(l.por || 1);
+          if (D.tipo === 'ingreso' || D.tipo === 'despacho') { if (!(total > 0)) throw new Error('Escriba la cantidad de ' + l.p.descripcion); }
+          if (D.tipo === 'despacho' && total > l.p.hay) throw new Error(`No hay suficiente ${l.p.descripcion}: hay ${num(l.p.hay)}`);
+          if (conCosto && (l.costo === '' || Number(l.costo) < 0)) throw new Error('Escriba el costo de ' + l.p.descripcion);
+          if (D.tipo === 'traslado' && !l.estante.trim()) throw new Error('Escriba el estante nuevo de ' + l.p.descripcion);
+          if (D.tipo === 'ajuste' && l.cant === '') throw new Error('Escriba cuántos contó de ' + l.p.descripcion);
+        }
+        bt.disabled = true;
+        const val = n => f[n] ? f[n].value : '';
+        const r = await EPT.rpc('ept_almacen_documento', { p: {
+          tipo: D.tipo, clase, suplidor: val('suplidor'), doc_suplidor: val('doc_suplidor'), numero_factura: val('numero_factura'), ncf: val('ncf'),
+          fecha_factura: val('fecha_factura'), para: val('para'), motivo: val('motivo'),
+          itbis: conCosto ? itbisDe(subtotal()) : 0,
+          lineas: lineas.map(l => {
+            const por = Number(l.por || 1), cant = Number(l.cant || 0);
+            return { producto_id: l.p.id, cantidad: D.tipo === 'ajuste' ? cant : cant * por,
+              presentacion: por > 1 ? `${num(cant)} ${l.p.empaque_nombre.toLowerCase()} de ${num(por)}` : '',
+              // el costo se escribe por empaque o por unidad; al servidor va por unidad
+              costo: conCosto ? Number(l.costo) / por : undefined, estante: l.estante };
+          }) } });
+        EPT.olvidar('productos');
+        EPT.aviso(`${D.nombre} ${r.codigo} registrado`);
+        abrirDocumento(r.id, true);
+      } catch (e) { err.textContent = EPT.error(e); bt.disabled = false; err.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    });
+    window.scrollTo(0, 0);
+  }
+  EPT.nuevoDocumentoAlmacen = nuevoDocumento;
+
+  // ---------- Ver un documento (se puede imprimir) ----------
+  async function abrirDocumento(id, recien) {
+    const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
+    const d = await EPT.leer(sb.from('almacen_documentos')
+      .select('*,usuario:usuarios(nombre),lineas:almacen_documento_lineas(renglon,cantidad,presentacion,costo,importe,estante_antes,estante_despues,sistema,diferencia,hay_despues,producto:productos(codigo,descripcion,unidad))')
+      .eq('id', id).single());
+    const D = DOC[d.clase]; const ls = [...d.lineas].sort((a, b) => a.renglon - b.renglon);
+    EPT.$('#subtitulo').textContent = D.nombre + ' ' + codDoc(d);
+    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnImprimir">${icono('imprimir')}Imprimir</button><button type="button" id="btnVolverDoc">${icono('atras')}Volver</button>`;
+    EPT.$('#btnImprimir').addEventListener('click', () => window.print());
+    EPT.$('#btnVolverDoc').addEventListener('click', () => EPT.ir(LISTA_DE[d.tipo]));
+    const cab = { ingreso: `<th>Código</th><th>Artículo</th><th>Cantidad</th>${d.clase === 'compra' ? '<th style="text-align:right">Costo</th><th style="text-align:right">Importe</th>' : ''}<th>Quedó</th>`,
+      despacho: `<th>Código</th><th>Artículo</th><th>Cantidad</th><th>Quedó</th>`,
+      traslado: '<th>Código</th><th>Artículo</th><th>Estante antes</th><th>Estante nuevo</th>',
+      ajuste: '<th>Código</th><th>Artículo</th><th>Decía el programa</th><th>Contado</th><th>Diferencia</th>' }[d.tipo];
+    const fila = l => { const p = l.producto; const c = `<td>${esc(p.codigo)}</td><td><b>${esc(p.descripcion)}</b></td>`;
+      const cant = `${num(l.cantidad)} ${esc(p.unidad)}${l.presentacion ? `<br><small class="mute">${esc(l.presentacion)}</small>` : ''}`;
+      return { ingreso: `${c}<td>${cant}</td>${d.clase === 'compra' ? `<td style="text-align:right">${dinero(l.costo)}</td><td style="text-align:right">${dinero(l.importe)}</td>` : ''}<td>${l.hay_despues == null ? '—' : num(l.hay_despues)}</td>`,
+        despacho: `${c}<td>${cant}</td><td>${l.hay_despues == null ? '—' : num(l.hay_despues)}</td>`,
+        traslado: `${c}<td>${esc(l.estante_antes || '—')}</td><td><b>${esc(l.estante_despues || '—')}</b></td>`,
+        ajuste: `${c}<td>${num(l.sistema)}</td><td>${num(l.cantidad)}</td><td><b class="${l.diferencia > 0 ? 'txt-ok' : l.diferencia < 0 ? 'txt-malo' : 'mute'}">${l.diferencia > 0 ? '+' : ''}${num(l.diferencia)}</b></td>` }[d.tipo]; };
+    v.innerHTML = `
+      ${recien ? `<div class="alerta">${icono('ok')}<div><b>Registrado.</b> ${d.tipo === 'ingreso' ? 'La existencia ya subió' + (d.clase === 'compra' ? ' y el costo quedó al día.' : '.') : d.tipo === 'despacho' ? 'La existencia ya bajó.' : d.tipo === 'traslado' ? 'Los estantes ya cambiaron.' : 'La existencia quedó como se contó.'}</div></div>` : ''}
+      <div class="panel comprobante"><div class="cuerpo">
+        <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>${esc(D.nombre)} · documento interno del almacén</span></div></div>
+        <div class="fila"><span class="ot-num">${codDoc(d)}</span><span class="estado ok">Registrado</span></div>
+        <dl class="datos">
+          <div><dt>Fecha</dt><dd>${fecha(d.fecha)}</dd></div>
+          <div><dt>Registró</dt><dd>${esc(d.usuario?.nombre || '')}</dd></div>
+          ${d.suplidor ? `<div><dt>Suplidor</dt><dd>${esc(d.suplidor)}</dd></div>` : ''}
+          ${d.numero_factura ? `<div><dt>${esc(d.doc_suplidor || 'Factura')}</dt><dd>${esc(d.numero_factura)}</dd></div>` : ''}
+          ${d.ncf ? `<div><dt>NCF</dt><dd>${esc(d.ncf)}</dd></div>` : ''}
+          ${d.fecha_factura ? `<div><dt>Fecha de la factura</dt><dd>${fechaCorta(d.fecha_factura)}</dd></div>` : ''}
+          ${d.para ? `<div><dt>Para</dt><dd>${esc(d.para)}</dd></div>` : ''}
+          ${d.motivo ? `<div class="ancho"><dt>${d.tipo === 'traslado' ? 'Nota' : 'Motivo'}</dt><dd>${esc(d.motivo)}</dd></div>` : ''}
+        </dl></div>
+        <div class="desliza"><table class="tabla"><thead><tr>${cab}</tr></thead><tbody>${ls.map(l => `<tr>${fila(l)}</tr>`).join('')}</tbody></table></div>
+        ${d.clase === 'compra' ? `<div class="totales-doc fijo"><div>Subtotal <b>${dinero(d.subtotal)}</b></div><div>ITBIS <b>${dinero(d.itbis)}</b></div><div class="total">Total de la factura <b>${dinero(d.total)}</b></div></div>` : ''}
+        <div class="firmas"><div>${d.tipo === 'despacho' ? 'Despachó (Almacén)' : 'Registró (Almacén)'}</div><div>${d.tipo === 'despacho' ? 'Recibió' : d.clase === 'compra' ? 'Entregó (suplidor)' : 'Revisó'}</div></div>
+      </div>`;
+    window.scrollTo(0, 0);
+  }
+
+  // =====================================================================
+  // Requisiciones: lo que Repuestos le pide al Almacén (es la "solicitud de traspaso" de Libra).
+  // Se ve en el Almacén ("Pedidos de Repuestos") y en Repuestos ("Pedidos al almacén").
+  // =====================================================================
+  let filtroReq = 'abiertas';
+  let volverReq = 'requisiciones';
+  async function listaRequisiciones(v) {
+    const q = sb.from('requisiciones').select('id,numero,estado,fecha,motivo,orden:ordenes(numero),creador:usuarios!requisiciones_creado_por_fkey(nombre),lineas:requisicion_lineas(id)').order('numero', { ascending: false }).limit(200);
+    const filas = await EPT.leer(filtroReq === 'abiertas' ? q.in('estado', ['nueva', 'pendiente', 'aprobada', 'parcial']) : q);
+    const c = k => filas.filter(r => r.estado === k).length;
+    v.innerHTML = `<div class="fila" style="margin-bottom:14px"><div class="seg" role="group">
+        <button type="button" data-f="abiertas" aria-pressed="${filtroReq === 'abiertas'}">Por atender</button>
+        <button type="button" data-f="todas" aria-pressed="${filtroReq === 'todas'}">Todas</button></div>
+        ${filtroReq === 'abiertas' ? `<div class="contadores" style="margin:0"><span><b>${c('nueva') + c('pendiente')}</b> por decidir</span><span><b>${c('aprobada') + c('parcial')}</b> aprobadas por despachar</span></div>` : ''}</div>
+      <div class="panel">${filas.length ? `<ul class="lista">${filas.map(r => `<li class="toca" data-r="${r.id}"><span class="serie">${rn(r.numero)}</span>
+        <div class="q"><b>${r.orden ? ot(r.orden.numero) : 'Reposición de Repuestos'}${r.motivo ? ' · ' + esc(r.motivo) : ''}</b>
+          <span>${cuantos(r.lineas.length)} · ${esc(r.creador?.nombre || '')} · ${fecha(r.fecha)}</span></div>${chip(REQ, r.estado)}</li>`).join('')}</ul>`
+        : '<div class="vacio">No hay pedidos por atender.</div>'}</div>`;
+    v.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { filtroReq = b.dataset.f; EPT.recargar(); }));
+    v.querySelectorAll('[data-r]').forEach(li => li.addEventListener('click', () => abrirRequisicion(li.dataset.r)));
+  }
+  EPT.listaRequisiciones = listaRequisiciones;
+
+  EPT.pantalla({
+    id: 'requisiciones', titulo: 'Pedidos de Repuestos', pestana: 'Pedidos de Repuestos', grupo: 'Almacén', icono: 'deposito', peso: 6,
+    explica: 'Lo que Repuestos le pide al almacén (requisiciones R-). Se aprueba y se despacha a Repuestos.',
+    ver: () => ['almacen.resolver', 'almacen.transferir', 'almacen.diferencia'].some(p => EPT.puede(p)),
+    mostrar: listaRequisiciones,
+  });
+
   async function abrirRequisicion(id) {
+    if (['requisiciones', 'rep_pedidos_alm'].includes(EPT.actual)) volverReq = EPT.actual;
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
     const r = await EPT.leer(sb.from('requisiciones').select('id,numero,estado,fecha,motivo,motivo_rechazo,resuelto,orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa)),creador:usuarios!requisiciones_creado_por_fkey(nombre),resolvio:usuarios!requisiciones_resuelto_por_fkey(nombre),lineas:requisicion_lineas(id,cantidad,disponible_repuestos,aprobada,enviada,producto:productos(id,codigo,descripcion,unidad))').eq('id', id).single());
     const desps = await EPT.leer(sb.from('transferencias').select('id,numero,estado,fecha_envio').eq('requisicion_id', id).order('numero'));
@@ -323,10 +660,9 @@
     const exA = Object.fromEntries((await EPT.leer(sb.from('existencias').select('producto_id,cantidad').eq('ubicacion', 'almacen').in('producto_id', ids))).map(e => [e.producto_id, Number(e.cantidad)]));
     const decidir = ['nueva', 'pendiente'].includes(r.estado) && EPT.puede('almacen.resolver');
     const despachar = ['aprobada', 'parcial'].includes(r.estado) && EPT.puede('almacen.transferir') && r.lineas.some(l => Number(l.enviada) < Number(l.aprobada));
-    EPT.$('#titulo').textContent = rn(r.numero);
-    EPT.$('#subtitulo').textContent = r.orden ? `${ot(r.orden.numero)} · ${[r.orden.vehiculo?.marca, r.orden.vehiculo?.modelo, r.orden.vehiculo?.placa].filter(Boolean).join(' ')}` : 'Reposición de Repuestos';
-    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnVolverReq">${icono('atras')}Requisiciones</button>`;
-    EPT.$('#btnVolverReq').addEventListener('click', () => EPT.ir('requisiciones'));
+    EPT.$('#subtitulo').textContent = rn(r.numero) + (r.orden ? ` · ${ot(r.orden.numero)} · ${[r.orden.vehiculo?.marca, r.orden.vehiculo?.modelo, r.orden.vehiculo?.placa].filter(Boolean).join(' ')}` : ' · Reposición de Repuestos');
+    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnVolverReq">${icono('atras')}Volver</button>`;
+    EPT.$('#btnVolverReq').addEventListener('click', () => EPT.ir(EPT.puedeVer(volverReq) ? volverReq : 'inicio'));
     v.innerHTML = `
       <div class="panel"><div class="cuerpo"><div class="fila"><span class="ot-num">${rn(r.numero)}</span>${chip(REQ, r.estado)}
         ${['nueva', 'pendiente'].includes(r.estado) && EPT.puede('repuestos.requisicion') ? '<button type="button" class="liso peque der" id="btnCancReq">Cancelar requisición</button>' : ''}</div>
@@ -393,37 +729,17 @@
   }
 
   // =====================================================================
-  // Despachos: lo que el Almacén despacha a Repuestos por una requisición
+  // Despacho a Repuestos (D-): va "en camino" hasta que Repuestos registra el ingreso
   // =====================================================================
-  let filtroDes = 'abiertas';
-  EPT.pantalla({
-    id: 'transferencias', titulo: 'Despachos a Repuestos', subtitulo: 'Lo que el Almacén despacha por requisición (no es venta)',
-    icono: 'camion', grupo: 'Almacén', atajo: 'Despachos',
-    ver: () => ['almacen.transferir', 'repuestos.recibir', 'almacen.diferencia'].some(p => EPT.puede(p)),
-    async mostrar(v) {
-      const q = sb.from('transferencias').select('id,numero,estado,fecha_envio,fecha_recibo,requisicion:requisiciones(numero,orden:ordenes(numero)),lineas:transferencia_lineas(id)').order('numero', { ascending: false }).limit(200);
-      const filas = await EPT.leer(filtroDes === 'abiertas' ? q.in('estado', ['en_preparacion', 'en_transito', 'con_diferencia']) : q);
-      v.innerHTML = `<div class="fila" style="margin-bottom:14px"><div class="seg" role="group">
-          <button type="button" data-f="abiertas" aria-pressed="${filtroDes === 'abiertas'}">En camino o con diferencia</button>
-          <button type="button" data-f="todas" aria-pressed="${filtroDes === 'todas'}">Todos</button></div></div>
-        <div class="panel">${filas.length ? `<ul class="lista">${filas.map(t => `<li class="toca" data-t="${t.id}">
-          <div class="q"><b>${dn(t.numero)}${t.requisicion ? ' · ' + rn(t.requisicion.numero) : ''}${t.requisicion?.orden ? ' · ' + ot(t.requisicion.orden.numero) : ''}</b>
-            <span>${t.lineas.length} pieza${t.lineas.length === 1 ? '' : 's'} · despachado ${fecha(t.fecha_envio)}${t.fecha_recibo ? ' · ingresó ' + fecha(t.fecha_recibo) : ''}</span></div>${chip(DES, t.estado)}</li>`).join('')}</ul>`
-          : '<div class="vacio">No hay mercancía en camino.</div>'}</div>`;
-      v.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { filtroDes = b.dataset.f; EPT.recargar(); }));
-      v.querySelectorAll('[data-t]').forEach(li => li.addEventListener('click', () => abrirDespacho(li.dataset.t)));
-    },
-  });
-
   async function abrirDespacho(id, recien) {
+    const volver = EPT.actual;
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
     const t = await EPT.leer(sb.from('transferencias').select('id,numero,estado,origen,destino,fecha_envio,fecha_recibo,fecha_resuelto,nota_diferencia,envio:usuarios!transferencias_enviado_por_fkey(nombre),recibio:usuarios!transferencias_recibido_por_fkey(nombre),requisicion:requisiciones(id,numero,orden:ordenes(id,numero,vehiculo:vehiculos(marca,modelo,placa))),lineas:transferencia_lineas(id,enviada,recibida,diferencia_nota,producto:productos(id,codigo,descripcion,unidad))').eq('id', id).single());
     const ingresar = t.estado === 'en_transito' && EPT.puede('repuestos.recibir');
     const resolver = t.estado === 'con_diferencia' && EPT.puede('almacen.diferencia');
-    EPT.$('#titulo').textContent = 'Despacho ' + dn(t.numero);
-    EPT.$('#subtitulo').textContent = 'Almacén → Repuestos';
-    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnImprimir">${icono('imprimir')}Imprimir comprobante</button><button type="button" id="btnVolverDes">${icono('atras')}Despachos</button>`;
-    EPT.$('#btnVolverDes').addEventListener('click', () => EPT.ir('transferencias'));
+    EPT.$('#subtitulo').textContent = 'Despacho ' + dn(t.numero) + ' · Almacén → Repuestos';
+    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnImprimir">${icono('imprimir')}Imprimir comprobante</button><button type="button" id="btnVolverDes">${icono('atras')}Volver</button>`;
+    EPT.$('#btnVolverDes').addEventListener('click', () => EPT.ir(['alm_despachos', 'rep_ingresos', 'requisiciones', 'rep_pedidos_alm'].includes(volver) ? volver : EPT.puedeVer('alm_despachos') ? 'alm_despachos' : 'rep_ingresos'));
     EPT.$('#btnImprimir').addEventListener('click', () => window.print());
     v.innerHTML = `
       ${recien ? `<div class="alerta">${icono('camion')}<div><b>Despachado.</b> La mercancía va en camino. Repuestos debe registrar el ingreso de lo que llegó.</div></div>` : ''}
@@ -471,4 +787,17 @@
   }
   EPT.abrirTransferencia = abrirDespacho;
   EPT.abrirRequisicion = abrirRequisicion;
+
+  // =====================================================================
+  // Inicio: lo que hace el Almacén, en palabras de todos los días
+  // =====================================================================
+  const nuevo = clase => () => nuevoDocumento(clase);
+  EPT.verbo({ grupo: 'Almacén', peso: 1, prin: true, titulo: 'Entró mercancía', sub: 'Registrar la factura de compra', ir: 'alm_ingresos', hacer: nuevo('compra'), ver: () => puedeAlm('ingreso') });
+  EPT.verbo({ grupo: 'Almacén', peso: 2, titulo: 'Salió mercancía', sub: 'A una persona o devolución al suplidor', ir: 'alm_despachos', hacer: nuevo('persona'), ver: () => puedeAlm('despacho') });
+  EPT.verbo({ grupo: 'Almacén', peso: 3, titulo: 'Pedidos de Repuestos', sub: 'Aprobar y despachar', ir: 'requisiciones',
+    cuenta: () => EPT.leer(sb.from('requisiciones').select('id').in('estado', ['nueva', 'pendiente', 'aprobada', 'parcial'])).then(l => l.length) });
+  EPT.verbo({ grupo: 'Almacén', peso: 4, titulo: 'Cambiar de estante', sub: 'Hacer un traslado', ir: 'alm_traslados', hacer: nuevo('traslado'), ver: () => puedeAlm('traslado') });
+  EPT.verbo({ grupo: 'Almacén', peso: 5, titulo: 'Conté y no cuadra', sub: 'Hacer un ajuste', ir: 'alm_ajustes', hacer: nuevo('conteo'), ver: () => puedeAlm('ajustar') });
+  EPT.verbo({ grupo: 'Almacén', peso: 6, titulo: 'Ver lo que hay', sub: 'Existencia del almacén', ir: 'inventario' });
+  EPT.verbo({ grupo: 'Almacén', peso: 7, titulo: 'Crear artículo', sub: 'Pieza, insumo, misceláneo o producto', ir: 'inventario', hacer: () => editarArticulo(null), ver: () => puedeAlm('articulos') });
 })();
