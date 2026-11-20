@@ -517,6 +517,24 @@
     const NOMBRE = { claro: ['sol', 'Modo claro'], oscuro: ['luna', 'Modo oscuro'] };
     const temaActual = () => document.documentElement.dataset.tema || (matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro');
     const pintarTema = () => { const [ic, t] = NOMBRE[TEMAS[temaActual()]]; $('#btnTema').innerHTML = `${icono(ic)}${t}`; };
+    // Tamaño de la letra de TODO el programa, por aparato (en la PC del taller se sube para leer de lejos).
+    // Reemplaza el zoom del navegador: así el programa se acomoda al tamaño en vez de achicarse.
+    const LETRAS = [0.9, 1, 1.1, 1.25, 1.4];
+    const letraActual = () => { const z = Number(document.documentElement.style.zoom || 1); return LETRAS.reduce((a, b) => Math.abs(b - z) < Math.abs(a - z) ? b : a, 1); };
+    const pintarLetra = () => {
+      const z = letraActual();
+      $('#letraPct').textContent = Math.round(z * 100) + ' %';
+      $('#btnLetraMenos').disabled = z === LETRAS[0]; $('#btnLetraMas').disabled = z === LETRAS[LETRAS.length - 1];
+    };
+    const cambiarLetra = paso => {
+      const z = LETRAS[Math.min(LETRAS.length - 1, Math.max(0, LETRAS.indexOf(letraActual()) + paso))];
+      document.documentElement.style.zoom = z === 1 ? '' : z;
+      try { localStorage.setItem('ept-letra', String(z)); } catch (_) { }
+      pintarLetra();
+    };
+    $('#btnLetraMenos').addEventListener('click', () => cambiarLetra(-1));
+    $('#btnLetraMas').addEventListener('click', () => cambiarLetra(1));
+    pintarLetra();
     $('#btnTema').addEventListener('click', () => {
       const t = TEMAS[temaActual()];
       document.documentElement.dataset.tema = t;

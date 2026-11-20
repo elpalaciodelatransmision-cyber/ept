@@ -474,3 +474,42 @@ details.expediente[open]>summary{margin-bottom:16px}
 .doc-nuevo>.seg{justify-self:start}
 .verbo{justify-content:start}
 .sugerencias li.nada:has([data-nada]){display:flex;flex-wrap:wrap;align-items:center;gap:8px;white-space:normal;cursor:default}
+
+/* ---------- Tamaño de la letra (A− / A+) en el pie del menú ---------- */
+.side-foot .letra{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:6px;padding:0 4px}
+.side-foot .letra span{font-size:13px;color:var(--sidemute)}
+.side-foot .letra b{min-width:52px;text-align:center;font-size:14px}
+.side-foot .letra button{min-height:36px;padding:0 10px;font-size:15px;font-weight:700}
+.side-foot .letra button:disabled{opacity:.35;cursor:default}
+
+/* ---------- Pantallas bajitas (laptop de 1360 × 768): cabe más sin achicar la letra ---------- */
+@media (max-height:820px) and (min-width:861px){
+  .side{gap:8px;padding:10px 12px 10px}
+  .side-brand{padding:0 4px 8px}
+  .side-brand .logo{width:40px;height:28px}
+  .side-nav{gap:0}
+  .side-nav button{min-height:38px}
+  .side-nav .hijos button{min-height:31px}
+  .side-foot{gap:6px;padding-top:8px}
+  .side-foot .yo{display:none}
+  .side-foot button{min-height:32px}
+  .side-foot .letra button{min-height:30px}
+  .appbar{min-height:50px;padding:6px 28px;margin-bottom:12px}
+  .appbar p{margin-top:0}
+  .pestanas{margin-bottom:8px}
+  .pestanas button{min-height:40px}
+  .explica{margin:-2px 0 10px;font-size:14px}
+  .saludo{margin-bottom:10px;gap:2px}
+  .saludo h2{font-size:21px}
+  .bloque{padding:10px 14px;margin-bottom:10px}
+  .bloque h3{margin-bottom:8px}
+  .verbo{min-height:58px;padding:8px 12px}
+  .lista li{min-height:52px;padding:8px 16px}
+  .panel>header{padding:10px 16px}
+  .filtros-inv{margin-bottom:8px}
+  .filtros-inv .campo,.doc-nuevo .campo{gap:2px}
+  input,select{min-height:42px}
+  .doc-nuevo{gap:8px}
+  .paso-doc{margin-top:2px}
+  .main{padding-bottom:20px}
+}

@@ -27,8 +27,8 @@
   // ---------- Pedidos del taller ----------
   EPT.pantalla({
     id: 'pedidos', titulo: 'Despachos a las órdenes', subtitulo: 'Lo que piden las órdenes de trabajo',
-    pestana: 'Despachos', explica: 'Lo que SALE de Repuestos hacia las órdenes de trabajo. Toque un pedido para despacharlo dentro de su orden.',
-    icono: 'entregar', grupo: 'Repuestos', atajo: 'Despachos', peso: 3, ver: verRep,
+    pestana: 'Albaranes de salida', explica: 'Lo que SALE de Repuestos hacia las órdenes de trabajo. Toque un pedido para despacharlo dentro de su orden.',
+    icono: 'entregar', grupo: 'Repuestos', atajo: 'Albaranes de salida', peso: 3, ver: verRep,
     async mostrar(v) {
       const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
         .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha'))
@@ -51,7 +51,7 @@
   // ---------- Ingresos de Repuestos: lo que manda el almacén (D-) y lo que devuelve el taller ----------
   const DES = { en_transito: ['En camino: registrar ingreso', 'aviso'], recibida: ['Ingresado', 'ok'], con_diferencia: ['Con diferencia', 'malo'], diferencia_resuelta: ['Diferencia resuelta', 'ok'] };
   EPT.pantalla({
-    id: 'rep_ingresos', titulo: 'Ingresos de Repuestos', pestana: 'Ingresos', grupo: 'Repuestos', icono: 'ingreso', peso: 2,
+    id: 'rep_ingresos', titulo: 'Ingresos de Repuestos', pestana: 'Albaranes de entrada', grupo: 'Repuestos', icono: 'ingreso', peso: 2,
     explica: 'Lo que ENTRA a Repuestos: lo que despacha el almacén (D-) y las piezas que devuelve el taller.',
     ver: () => ['repuestos.recibir', 'repuestos.devolucion'].some(p => EPT.puede(p)),
     async mostrar(v) {
