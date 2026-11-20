@@ -131,35 +131,45 @@
     });
   }
 
-  // ---------- Mecánicos ----------
+  // ---------- Mecánicos y ayudantes ----------
+  // Los dos van en la misma lista al pedir y despachar piezas (a veces se le despacha a un ayudante),
+  // pero se distinguen: el ayudante sale con "(ayudante)".
+  const TIPO_MEC = { mecanico: 'Mecánicos', ayudante: 'Ayudantes' };
   EPT.pantalla({
-    id: 'mecanicos', titulo: 'Mecánicos', subtitulo: 'La lista que se usa al pedir y despachar piezas',
-    icono: 'mecanicos', grupo: 'Administración', atajo: 'Mecánicos',
+    id: 'mecanicos', titulo: 'Mecánicos y ayudantes', pestana: 'Mecánicos y ayudantes', subtitulo: 'La lista que se usa al pedir y despachar piezas',
+    explica: 'Las personas del taller a quienes se les asigna una orden o se les despachan piezas.',
+    icono: 'mecanicos', grupo: 'Administración', atajo: 'Mecánicos y ayudantes',
     ver: () => EPT.puede('mecanicos.gestionar'),
     async mostrar(v) {
-      const lista = await EPT.leer(sb.from('mecanicos').select('id,nombre,activo').order('activo', { ascending: false }).order('nombre'));
-      EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevoMec">${icono('mas')}Agregar mecánico</button>`;
-      EPT.$('#btnNuevoMec').addEventListener('click', () => fichaMecanico(null));
-      v.innerHTML = `<div class="panel">${lista.length ? `<ul class="lista">${lista.map(m => `
-        <li class="toca ${m.activo ? '' : 'apagado'}" data-id="${m.id}">
-          <div class="q"><b>${esc(m.nombre)}</b></div>
-          <span class="estado ${m.activo ? 'ok' : ''}">${m.activo ? 'Trabajando' : 'Ya no está'}</span>
-        </li>`).join('')}</ul>` : '<div class="vacio">Todavía no hay mecánicos. Toque "Agregar mecánico".</div>'}</div>`;
-      v.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('click', () => fichaMecanico(lista.find(m => m.id === li.dataset.id))));
+      const lista = await EPT.leer(sb.from('mecanicos').select('id,nombre,activo,tipo').order('activo', { ascending: false }).order('nombre'));
+      EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevoMec">${icono('mas')}Agregar mecánico</button>
+        <button type="button" id="btnNuevoAyu">${icono('mas')}Agregar ayudante</button>`;
+      EPT.$('#btnNuevoMec').addEventListener('click', () => fichaMecanico(null, 'mecanico'));
+      EPT.$('#btnNuevoAyu').addEventListener('click', () => fichaMecanico(null, 'ayudante'));
+      v.innerHTML = Object.entries(TIPO_MEC).map(([t, g]) => { const ms = lista.filter(m => (m.tipo || 'mecanico') === t);
+        return `<div class="panel" style="margin-bottom:16px"><header><h2>${g}</h2><span class="mute">${ms.filter(m => m.activo).length} trabajando</span></header>
+          ${ms.length ? `<ul class="lista">${ms.map(m => `
+          <li class="toca ${m.activo ? '' : 'apagado'}" data-id="${m.id}">
+            <div class="q"><b>${esc(m.nombre)}</b></div>
+            <span class="estado ${m.activo ? 'ok' : ''}">${m.activo ? 'Trabajando' : 'Ya no está'}</span>
+          </li>`).join('')}</ul>` : `<div class="vacio">Todavía no hay ${g.toLowerCase()}.</div>`}</div>`; }).join('');
+      v.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('click', () => { const m = lista.find(x => x.id === li.dataset.id); fichaMecanico(m, m.tipo); }));
     },
   });
 
-  function fichaMecanico(m) {
+  function fichaMecanico(m, tipo) {
     EPT.ventana({
-      titulo: m ? m.nombre : 'Agregar mecánico',
+      titulo: m ? m.nombre : tipo === 'ayudante' ? 'Agregar ayudante' : 'Agregar mecánico',
       cuerpo: `<label class="campo">Nombre<input name="nombre" value="${esc(m ? m.nombre : '')}" required maxlength="80"></label>
+        <label class="campo">Es<select name="tipo"><option value="mecanico" ${tipo !== 'ayudante' ? 'selected' : ''}>Mecánico</option>
+          <option value="ayudante" ${tipo === 'ayudante' ? 'selected' : ''}>Ayudante</option></select></label>
         ${m ? `<label class="campo">Estado<select name="activo">
           <option value="1" ${m.activo ? 'selected' : ''}>Trabajando</option>
           <option value="0" ${m.activo ? '' : 'selected'}>Ya no está (no aparece en las listas)</option></select></label>` : ''}`,
       async alGuardar(f) {
         const d = Object.fromEntries(new FormData(f));
-        await EPT.rpc('ept_mecanico_guardar', { p_id: m ? m.id : null, p_nombre: d.nombre, p_activo: m ? d.activo === '1' : true });
-        EPT.aviso(m ? 'Guardado' : 'Mecánico agregado');
+        await EPT.rpc('ept_mecanico_guardar', { p_id: m ? m.id : null, p_nombre: d.nombre, p_activo: m ? d.activo === '1' : true, p_tipo: d.tipo });
+        EPT.aviso(m ? 'Guardado' : d.tipo === 'ayudante' ? 'Ayudante agregado' : 'Mecánico agregado');
         EPT.recargar();
       },
     });

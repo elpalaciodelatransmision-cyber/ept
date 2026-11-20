@@ -22,7 +22,7 @@
     icono: 'caja_reg', grupo: 'Caja', atajo: 'Facturación y cobro', ver: () => verCaja() || EPT.puede('reportes.ver'),
     async mostrar(v) {
       const [porFacturar, facturas] = await Promise.all([
-        EPT.leer(sb.from('ordenes').select('id,numero,actualizado,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa),mecanico:mecanicos(nombre)').eq('estado', 'en_caja').order('actualizado')),
+        EPT.leer(sb.from('ordenes').select('id,numero,actualizado,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa),mecanico:mecanicos(nombre:nombre_lista)').eq('estado', 'en_caja').order('actualizado')),
         EPT.leer(sb.from('facturas').select('id,numero_externo,estado,total,pagado,fecha_factura,orden:ordenes(id,numero,estado,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
           .order('fecha_factura', { ascending: false }).limit(300)),
       ]);
@@ -53,7 +53,7 @@
   async function abrirCobro(id) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
     const [o, facturas, auts] = await Promise.all([
-      EPT.leer(sb.from('ordenes').select('id,numero,estado,entregada_en,kilometraje,motivo,nota_estado,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)').eq('id', id).single()),
+      EPT.leer(sb.from('ordenes').select('id,numero,estado,entregada_en,kilometraje,motivo,nota_estado,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)').eq('id', id).single()),
       EPT.leer(sb.from('facturas').select('id,numero_externo,estado,subtotal,descuento,cargos,impuesto,total,pagado,detalle,fecha_factura,observacion,usuario:usuarios(nombre),pagos(id,forma,importe,referencia,fecha,usuario:usuarios(nombre))').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('autorizaciones').select('id,tipo,detalle,importe,estado,nota_respuesta,fecha,pide:usuarios!autorizaciones_pedido_por_fkey(nombre)').eq('orden_id', id).in('tipo', ['cargo_adicional', 'descuento']).order('fecha')),
     ]);

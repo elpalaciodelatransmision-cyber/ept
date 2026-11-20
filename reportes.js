@@ -35,7 +35,7 @@
         cuenta(sb.from('recepciones_taller').select('id', { count: 'exact', head: true }).neq('nota', '').gte('fecha', F.desde)),
         cuenta(cnt('transferencias').eq('estado', 'con_diferencia')), cuenta(cnt('devoluciones').eq('estado', 'pendiente')),
         cuenta(cnt('autorizaciones').eq('estado', 'pendiente')),
-        EPT.leer(sb.from('mecanicos').select('id,nombre').order('nombre')),
+        EPT.leer(sb.from('mecanicos').select('id,nombre:nombre_lista').order('nombre')),
       ]);
       const ind = [
         ['Órdenes abiertas', abiertas, 'ordenes', ''], ['Vehículos en reparación', reparacion, 'ordenes', 'en_reparacion'], ['Esperando piezas', esperando, 'ordenes', 'esperando_piezas', esperando ? 'aviso' : ''],
@@ -71,7 +71,7 @@
   });
 
   async function buscar() {
-    let q = sb.from('ordenes').select('id,numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)')
+    let q = sb.from('ordenes').select('id,numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)')
       .gte('fecha', F.desde).lte('fecha', F.hasta + 'T23:59:59').order('numero', { ascending: false }).limit(500);
     if (F.mecanico) q = q.eq('mecanico_id', F.mecanico);
     if (F.estado) q = q.eq('estado', F.estado);
@@ -89,17 +89,17 @@
   // Cada reporte: título, columnas y cómo traer las filas para el período
   const R = {
     ordenes: { t: 'Órdenes por período', cols: ['Orden', 'Fecha', 'Cliente', 'Teléfono', 'Vehículo', 'Mecánico', 'Motivo', 'Estado'],
-      async filas(d, h) { return (await EPT.leer(sb.from('ordenes').select('numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,placa),mecanico:mecanicos(nombre)').gte('fecha', d).lte('fecha', h).order('numero')))
+      async filas(d, h) { return (await EPT.leer(sb.from('ordenes').select('numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,placa),mecanico:mecanicos(nombre:nombre_lista)').gte('fecha', d).lte('fecha', h).order('numero')))
         .map(o => [ot(o.numero), dia(o.fecha), o.cliente?.nombre, o.cliente?.telefono, veh(o.vehiculo), o.mecanico?.nombre || '', o.motivo, ESTADOS[o.estado] || o.estado]); } },
     consumo_orden: { t: 'Consumo de materiales por orden', cols: ['Orden', 'Pieza', 'Código', 'Usadas', 'Dañadas', 'Fecha'],
       async filas(d, h) { return (await EPT.leer(sb.from('consumos').select('utilizada,danada,fecha,producto:productos(codigo,descripcion),orden:ordenes(numero)').gte('fecha', d).lte('fecha', h).order('fecha')))
         .map(c => [ot(c.orden.numero), c.producto.descripcion, c.producto.codigo, Number(c.utilizada), Number(c.danada), dia(c.fecha)]); } },
     consumo_mecanico: { t: 'Consumo por mecánico', cols: ['Mecánico', 'Pieza', 'Usadas', 'Dañadas', 'Órdenes'],
-      async filas(d, h) { const fs = await EPT.leer(sb.from('consumos').select('utilizada,danada,producto:productos(descripcion),orden:ordenes(numero,mecanico:mecanicos(nombre))').gte('fecha', d).lte('fecha', h));
+      async filas(d, h) { const fs = await EPT.leer(sb.from('consumos').select('utilizada,danada,producto:productos(descripcion),orden:ordenes(numero,mecanico:mecanicos(nombre:nombre_lista))').gte('fecha', d).lte('fecha', h));
         const g = {}; fs.forEach(c => { const k = (c.orden.mecanico?.nombre || 'Sin mecánico') + '|' + c.producto.descripcion; const x = g[k] || (g[k] = { u: 0, d: 0, o: new Set() }); x.u += Number(c.utilizada); x.d += Number(c.danada); x.o.add(c.orden.numero); });
         return Object.entries(g).sort().map(([k, x]) => [...k.split('|'), x.u, x.d, x.o.size]); } },
     salidas: { t: 'Salidas de Repuestos al taller', cols: ['Fecha', 'Orden', 'Pieza', 'Código', 'Cantidad', 'Mecánico', 'Despachó'],
-      async filas(d, h) { return (await EPT.leer(sb.from('despacho_lineas').select('cantidad,producto:productos(codigo,descripcion),despacho:despachos!inner(fecha,orden:ordenes(numero),mecanico:mecanicos(nombre),usuario:usuarios(nombre))').gte('despacho.fecha', d).lte('despacho.fecha', h)))
+      async filas(d, h) { return (await EPT.leer(sb.from('despacho_lineas').select('cantidad,producto:productos(codigo,descripcion),despacho:despachos!inner(fecha,orden:ordenes(numero),mecanico:mecanicos(nombre:nombre_lista),usuario:usuarios(nombre))').gte('despacho.fecha', d).lte('despacho.fecha', h)))
         .sort((a, b) => a.despacho.fecha.localeCompare(b.despacho.fecha)).map(l => [fecha(l.despacho.fecha), l.despacho.orden ? ot(l.despacho.orden.numero) : '', l.producto.descripcion, l.producto.codigo, Number(l.cantidad), l.despacho.mecanico?.nombre || '', l.despacho.usuario?.nombre || '']); } },
     transferencias: { t: 'Despachos del Almacén a Repuestos', cols: ['Despacho', 'Requisición', 'Despachado el', 'Ingresó el', 'Pieza', 'Cantidad despachada', 'Cantidad ingresada', 'Estado'],
       async filas(d, h) { return (await EPT.leer(sb.from('transferencia_lineas').select('enviada,recibida,producto:productos(descripcion),t:transferencias!inner(numero,estado,fecha_envio,fecha_recibo,requisicion:requisiciones(numero))').gte('t.fecha_envio', d).lte('t.fecha_envio', h)))
@@ -176,6 +176,110 @@
     },
   });
   EPT.reportes = R;
+
+  // ---------- Historial de clientes: por día, semana o mes ----------
+  // Cada cliente que trajo un carro en el período (por la fecha de entrada de la orden), con sus vehículos,
+  // sus órdenes, lo facturado, lo pagado y lo que debe. Abajo, cuántos clientes hubo cada día (o cada semana).
+  const H = { tipo: 'semana', fecha: hoy() };
+  const isoLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  // inicio y fin (sin incluir) del período que contiene la fecha
+  function periodo(tipo, fechaTxt) {
+    const f = new Date(fechaTxt + 'T12:00:00');
+    let ini, fin;
+    if (tipo === 'dia') { ini = new Date(f.getFullYear(), f.getMonth(), f.getDate()); fin = new Date(ini); fin.setDate(fin.getDate() + 1); }
+    else if (tipo === 'semana') { ini = new Date(f.getFullYear(), f.getMonth(), f.getDate() - ((f.getDay() + 6) % 7)); fin = new Date(ini); fin.setDate(fin.getDate() + 7); }   // lunes a domingo
+    else { ini = new Date(f.getFullYear(), f.getMonth(), 1); fin = new Date(f.getFullYear(), f.getMonth() + 1, 1); }
+    const ult = new Date(fin); ult.setDate(ult.getDate() - 1);
+    const nombre = tipo === 'dia' ? ini.toLocaleDateString('es-DO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      : tipo === 'semana' ? `Semana del ${ini.getDate()} de ${MESES[ini.getMonth()]} al ${ult.getDate()} de ${MESES[ult.getMonth()]} de ${ult.getFullYear()}`
+      : `${MESES[ini.getMonth()][0].toUpperCase() + MESES[ini.getMonth()].slice(1)} de ${ini.getFullYear()}`;
+    return { ini, fin, nombre };
+  }
+  let ultimoHist = null;
+
+  EPT.pantalla({
+    id: 'historial_clientes', titulo: 'Historial de clientes', pestana: 'Historial de clientes', icono: 'usuarios', grupo: 'Administración', atajo: 'Historial de clientes', peso: 2,
+    explica: 'Los clientes atendidos por día, semana o mes: sus vehículos, sus órdenes, lo facturado, lo pagado y lo que deben.',
+    ver: () => EPT.puede('reportes.ver'),
+    async mostrar(v) {
+      EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnHistXls">${icono('excel')}Excel</button><button type="button" id="btnHistPdf">${icono('imprimir')}PDF / imprimir</button>`;
+      const P = periodo(H.tipo, H.fecha);
+      v.innerHTML = `<div class="fila no-imprimir" style="margin-bottom:14px">
+          <div class="seg" role="group">${[['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes']].map(([k, t]) => `<button type="button" data-t="${k}" aria-pressed="${H.tipo === k}">${t}</button>`).join('')}</div>
+          <div class="fila" style="gap:6px"><button type="button" id="hAnt" aria-label="Período anterior">◀</button>
+            <input type="date" id="hFecha" value="${H.fecha}" style="width:auto"><button type="button" id="hSig" aria-label="Período siguiente">▶</button>
+            <button type="button" class="liso peque" id="hHoy">Hoy</button></div></div>
+        <div class="panel comprobante" id="hCaja"><div class="vacio">Cargando…</div></div>`;
+      v.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => { H.tipo = b.dataset.t; EPT.recargar(); }));
+      v.querySelector('#hFecha').addEventListener('change', e => { if (e.target.value) { H.fecha = e.target.value; EPT.recargar(); } });
+      const mover = paso => { const f = new Date(H.fecha + 'T12:00:00');
+        if (H.tipo === 'dia') f.setDate(f.getDate() + paso); else if (H.tipo === 'semana') f.setDate(f.getDate() + 7 * paso); else f.setMonth(f.getMonth() + paso, 1);
+        H.fecha = isoLocal(f); EPT.recargar(); };
+      v.querySelector('#hAnt').addEventListener('click', () => mover(-1));
+      v.querySelector('#hSig').addEventListener('click', () => mover(1));
+      v.querySelector('#hHoy').addEventListener('click', () => { H.fecha = hoy(); EPT.recargar(); });
+      EPT.$('#btnHistPdf').addEventListener('click', () => window.print());
+      EPT.$('#btnHistXls').addEventListener('click', () => {
+        if (!ultimoHist || !window.XLSX) return EPT.aviso('No se pudo armar el Excel', true);
+        const { P: p, clientes, tot } = ultimoHist;
+        const datos = [['Historial de clientes'], [p.nombre], [],
+          ['Cliente', 'Teléfono', 'Vehículos', 'Órdenes', 'Visitas', 'Facturado', 'Pagado', 'Debe', 'Última visita'],
+          ...clientes.map(c => [c.nombre, c.telefono, c.vehiculos.join(', '), c.ordenes.join(', '), c.ordenes.length, c.facturado, c.pagado, c.facturado - c.pagado, dia(c.ultima)]),
+          ['Total', '', '', '', tot.ordenes, tot.facturado, tot.pagado, tot.facturado - tot.pagado, '']];
+        const hoja = XLSX.utils.aoa_to_sheet(datos); hoja['!cols'] = [30, 14, 34, 24, 8, 14, 14, 14, 14].map(w => ({ wch: w }));
+        const libro = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(libro, hoja, 'Clientes');
+        const nombre = `EPT_historial_clientes_${H.tipo}_${isoLocal(p.ini)}.xlsx`; XLSX.writeFile(libro, nombre); EPT.aviso(`Excel descargado: ${nombre}`);
+      });
+
+      const caja = v.querySelector('#hCaja');
+      const ords = await EPT.leer(sb.from('ordenes').select('id,numero,fecha,estado,cliente:clientes(id,nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa)')
+        .gte('fecha', P.ini.toISOString()).lt('fecha', P.fin.toISOString()).order('fecha'));
+      const facts = ords.length ? await EPT.leer(sb.from('facturas').select('orden_id,total,pagado,estado').in('orden_id', ords.map(o => o.id)).neq('estado', 'anulada')) : [];
+      const factDe = {}; facts.forEach(f => { const x = factDe[f.orden_id] || (factDe[f.orden_id] = { t: 0, p: 0 }); x.t += Number(f.total); x.p += Number(f.pagado || 0); });
+      const porCli = new Map();
+      for (const o of ords) {
+        const k = o.cliente?.id || 'sin'; const c = porCli.get(k) || { nombre: o.cliente?.nombre || 'Sin nombre', telefono: o.cliente?.telefono || '', vehiculos: [], ordenes: [], facturado: 0, pagado: 0, ultima: null };
+        const vh = [o.vehiculo?.marca, o.vehiculo?.modelo, o.vehiculo?.anio, o.vehiculo?.placa].filter(Boolean).join(' ');
+        if (vh && !c.vehiculos.includes(vh)) c.vehiculos.push(vh);
+        c.ordenes.push(ot(o.numero) + (o.estado === 'cancelada' ? ' (cancelada)' : ''));
+        c.facturado += factDe[o.id]?.t || 0; c.pagado += factDe[o.id]?.p || 0; c.ultima = o.fecha;
+        porCli.set(k, c);
+      }
+      const clientes = [...porCli.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+      const tot = { clientes: clientes.length, ordenes: ords.length, facturado: clientes.reduce((a, c) => a + c.facturado, 0), pagado: clientes.reduce((a, c) => a + c.pagado, 0),
+        vehiculos: new Set(ords.map(o => o.vehiculo && [o.vehiculo.marca, o.vehiculo.placa].join('|'))).size };
+      ultimoHist = { P, clientes, tot };
+      // detalle: por día (semana y mes) o por semana (mes)
+      const tramos = [];
+      const paso = H.tipo === 'mes' ? 7 : 1;   // la semana se ve por día; el mes, por semana (lunes a domingo)
+      if (H.tipo !== 'dia') {
+        let d = H.tipo === 'mes' ? periodo('semana', isoLocal(P.ini)).ini : new Date(P.ini);
+        for (; d < P.fin; d.setDate(d.getDate() + paso)) {
+          const desde = d < P.ini ? P.ini : new Date(d), hasta = new Date(d); hasta.setDate(hasta.getDate() + paso); const tope = hasta > P.fin ? P.fin : hasta;
+          const del = ords.filter(o => { const f = new Date(o.fecha); return f >= desde && f < tope; });
+          const fin = new Date(tope); fin.setDate(fin.getDate() - 1);
+          tramos.push({ t: paso === 1 ? d.toLocaleDateString('es-DO', { weekday: 'short', day: 'numeric', month: 'short' }) : (desde.getDate() === fin.getDate() ? `El ${fin.getDate()}` : `Del ${desde.getDate()} al ${fin.getDate()}`),
+            c: new Set(del.map(o => o.cliente?.id)).size, o: del.length });
+        }
+      }
+      const maxC = Math.max(1, ...tramos.map(x => x.c));
+      caja.innerHTML = `<div class="cuerpo"><div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN · Historial de clientes</b><span>${esc(P.nombre)}</span></div></div>
+          <div class="contadores"><span><b>${tot.clientes}</b> cliente${tot.clientes === 1 ? '' : 's'}</span><span><b>${tot.vehiculos}</b> vehículo${tot.vehiculos === 1 ? '' : 's'}</span>
+            <span><b>${tot.ordenes}</b> ${tot.ordenes === 1 ? 'orden' : 'órdenes'}</span><span>Facturado <b>${dinero(tot.facturado)}</b></span><span>Pagado <b>${dinero(tot.pagado)}</b></span>
+            <span class="${tot.facturado - tot.pagado > 0 ? 'txt-malo' : ''}">Deben <b>${dinero(tot.facturado - tot.pagado)}</b></span></div></div>
+        ${clientes.length ? `<div class="desliza"><table class="tabla"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Vehículos</th><th>Órdenes</th>
+            <th style="text-align:right">Facturado</th><th style="text-align:right">Pagado</th><th style="text-align:right">Debe</th><th>Última visita</th></tr></thead><tbody>
+          ${clientes.map(c => `<tr><td><b>${esc(c.nombre)}</b></td><td>${esc(c.telefono)}</td><td>${esc(c.vehiculos.join(', '))}</td><td>${esc(c.ordenes.join(', '))}</td>
+            <td style="text-align:right">${dinero(c.facturado)}</td><td style="text-align:right">${dinero(c.pagado)}</td>
+            <td style="text-align:right" class="${c.facturado - c.pagado > 0 ? 'txt-malo' : ''}">${dinero(c.facturado - c.pagado)}</td><td>${dia(c.ultima)}</td></tr>`).join('')}
+          <tr class="total"><td><b>Total</b></td><td></td><td></td><td><b>${tot.ordenes}</b></td><td style="text-align:right"><b>${dinero(tot.facturado)}</b></td>
+            <td style="text-align:right"><b>${dinero(tot.pagado)}</b></td><td style="text-align:right"><b>${dinero(tot.facturado - tot.pagado)}</b></td><td></td></tr></tbody></table></div>`
+          : `<div class="vacio">No vino ningún cliente en este período.</div>`}
+        ${tramos.length ? `<div class="cuerpo"><h3 style="font-size:15px;margin:6px 0 10px">Clientes por ${H.tipo === 'mes' ? 'semana' : 'día'}</h3><div class="barras-dia">${tramos.map(x => `<div class="bd">
+            <span class="bd-t">${esc(x.t)}</span><span class="bd-b"><i style="width:${Math.round(x.c / maxC * 100)}%"></i></span><span class="bd-n">${x.c} cliente${x.c === 1 ? '' : 's'} · ${x.o} ${x.o === 1 ? 'orden' : 'órdenes'}</span></div>`).join('')}</div></div>` : ''}`;
+    },
+  });
 
   // ---------- Auditoría ----------
   const A = { desde: haceDias(7), hasta: hoy(), tabla: '', usuario: '' };

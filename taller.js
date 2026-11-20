@@ -59,7 +59,7 @@
   });
 
   async function pintarLista() {
-    let q = sb.from('ordenes').select('id,numero,fecha,estado,paso,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre)')
+    let q = sb.from('ordenes').select('id,numero,fecha,estado,paso,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)')
       .order('numero', { ascending: false }).limit(100);
     if (filtro === 'taller') q = q.in('estado', EN_TALLER);
     if (filtro === 'revision') q = q.eq('estado', 'en_revision');
@@ -86,10 +86,13 @@
   const prN = n => 'PR-' + String(n).padStart(4, '0');
 
   async function mecanicosActivos() {
-    return EPT.leer(sb.from('mecanicos').select('id,nombre').eq('activo', true).order('nombre'));
+    return EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre'));
   }
-  const opcionesMec = (lista, sel) => `<option value="">— Sin asignar —</option>` +
-    lista.map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.nombre)}</option>`).join('');
+  // mecánicos y ayudantes en la misma lista, separados en dos grupos
+  EPT.opcionesMec = (lista, sel) => `<option value="">— Sin asignar —</option>` +
+    [['mecanico', 'Mecánicos'], ['ayudante', 'Ayudantes']].map(([t, g]) => { const ms = lista.filter(m => (m.tipo || 'mecanico') === t);
+      return ms.length ? `<optgroup label="${g}">${ms.map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.nombre)}${t === 'ayudante' ? ' (ayudante)' : ''}</option>`).join('')}</optgroup>` : ''; }).join('');
+  const opcionesMec = EPT.opcionesMec;
 
   async function nuevaOrden() {
     const mecs = await mecanicosActivos();
@@ -111,7 +114,7 @@
           <label class="campo">Placa<input name="placa" autocapitalize="characters" maxlength="12" placeholder="Busca si ya vino"></label>
           <label class="campo">Kilometraje<input name="km" inputmode="numeric" maxlength="10"></label>
         </div>
-        ${EPT.puede('mecanico.asignar') ? `<div class="dos"><label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs)}</select></label></div>` : ''}
+        ${EPT.puede('mecanico.asignar') ? `<div class="dos"><label class="campo">Mecánico o ayudante<select name="mecanico">${opcionesMec(mecs)}</select></label></div>` : ''}
         <label class="campo">¿Por qué vino?<input name="motivo" maxlength="200" placeholder="Ej. no cambia a tercera"></label>
         ${EPT.puede('diagnostico.registrar') ? `<label class="campo">Diagnóstico <small class="opc">(si ya se sabe)</small><textarea name="diagnostico" maxlength="1000"></textarea></label>` : ''}
         <label class="campo">Observaciones <small class="opc">(opcional)</small><input name="obs" maxlength="300"></label>`,
@@ -156,11 +159,11 @@
   async function cargarOrden(id) {
     // todo a la vez (antes la segunda parte esperaba a la primera)
     const [o, sols, desp, saldo, mano, diags, notas, cons, devs, reqs] = await Promise.all([
-      EPT.leer(sb.from('ordenes').select('*,cliente:clientes(id,nombre,telefono),vehiculo:vehiculos(id,marca,modelo,anio,placa),mecanico:mecanicos(id,nombre)').eq('id', id).single()),
-      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,mecanico:mecanicos(nombre),lineas:solicitud_lineas(id,descripcion,codigo,cantidad,unidad,despachada,recibida,observaciones)').eq('orden_id', id).order('numero')),
+      EPT.leer(sb.from('ordenes').select('*,cliente:clientes(id,nombre,telefono),vehiculo:vehiculos(id,marca,modelo,anio,placa),mecanico:mecanicos(id,nombre:nombre_lista)').eq('id', id).single()),
+      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,mecanico:mecanicos(nombre:nombre_lista),lineas:solicitud_lineas(id,descripcion,codigo,cantidad,unidad,despachada,recibida,observaciones)').eq('orden_id', id).order('numero')),
       EPT.leer(sb.from('despachos').select('id,fecha,usuario:usuarios(nombre),lineas:despacho_lineas(id,cantidad,producto:productos(descripcion,unidad),recepcion:recepciones_taller(cantidad_recibida,fecha,nota))').eq('orden_id', id).order('fecha')),
       EPT.rpc('ept_saldo_orden', { p_orden: id }),
-      EPT.leer(sb.from('mano_obra').select('id,descripcion,importe,fecha,adicional,anulada,motivo_anulacion,mecanico:mecanicos(nombre)').eq('orden_id', id).order('fecha')),
+      EPT.leer(sb.from('mano_obra').select('id,descripcion,importe,fecha,adicional,anulada,motivo_anulacion,mecanico:mecanicos(nombre:nombre_lista)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('diagnosticos').select('texto,fecha,usuario:usuarios(nombre)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('observaciones').select('texto,fecha,departamento,usuario:usuarios(nombre)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('consumos').select('utilizada,danada,observaciones,fecha,producto:productos(descripcion)').eq('orden_id', id).order('fecha')),
@@ -427,7 +430,7 @@
           <label class="campo">Año<input name="anio" value="${esc(o.vehiculo.anio)}" inputmode="numeric"></label></div>
         <div class="dos"><label class="campo">Placa<input name="placa" value="${esc(o.vehiculo.placa)}"></label>
           <label class="campo">Kilometraje<input name="km" value="${esc(o.kilometraje)}" inputmode="numeric"></label></div>
-        ${EPT.puede('mecanico.asignar') ? `<label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs, o.mecanico_id)}</select></label>` : ''}
+        ${EPT.puede('mecanico.asignar') ? `<label class="campo">Mecánico o ayudante<select name="mecanico">${opcionesMec(mecs, o.mecanico_id)}</select></label>` : ''}
         <label class="campo">Motivo<input name="motivo" value="${esc(o.motivo)}"></label>
         <label class="campo">Observaciones<input name="obs" value="${esc(o.observaciones)}"></label>`,
       async alGuardar(f) {
@@ -457,7 +460,7 @@
       boton: sol ? 'Agregar al pedido' : 'Anotar piezas',
       cuerpo: `
         ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>.</p>`
-          : `<label class="campo">Mecánico que las pide<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
+          : `<label class="campo">¿Quién las pide? (mecánico o ayudante)<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
           ${delPres.length ? `<p class="pista" style="margin:0 0 6px">Se pusieron las piezas del presupuesto <b>${prN(pres.numero)}</b>. Puede quitar o agregar.</p>` : ''}
           <div id="renglones">${delPres.length ? delPres.map(renglon).join('') : renglon()}</div>
@@ -531,7 +534,7 @@
         <p class="mute" id="descServ" style="margin:-6px 0 0" hidden></p>
         <label class="campo" id="cDesc" hidden>Trabajo realizado<input name="desc" maxlength="200" placeholder="Ej. Ajustar varillaje"></label>
         <label class="campo">Nota <small class="opc">(opcional)</small><input name="nota" maxlength="150"></label>
-        <div class="dos"><label class="campo">Mecánico<select name="mecanico">${opcionesMec(mecs, o.mecanico_id)}</select></label>
+        <div class="dos"><label class="campo">Mecánico o ayudante<select name="mecanico">${opcionesMec(mecs, o.mecanico_id)}</select></label>
           <label class="campo">Importe RD$<input name="importe" type="number" min="0" step="any" inputmode="decimal" required></label></div>
         <p class="falta-precio" id="sinPrecio" hidden>Este servicio no tiene precio fijo: escriba el importe.</p>
         <label class="check" id="cPedir" hidden><input type="checkbox" name="pedir" checked> <span id="txtPedir"></span></label>

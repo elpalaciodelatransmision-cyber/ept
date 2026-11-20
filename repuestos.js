@@ -30,7 +30,7 @@
     pestana: 'Albaranes de salida', explica: 'Lo que SALE de Repuestos hacia las órdenes de trabajo. Toque un pedido para despacharlo dentro de su orden.',
     icono: 'entregar', grupo: 'Repuestos', atajo: 'Albaranes de salida', peso: 3, ver: verRep,
     async mostrar(v) {
-      const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
+      const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
         .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha'))
         .then(l => l.filter(s => !s.orden || s.orden.paso === 4));
       const cuenta = k => sols.filter(s => s.estado === k).length;
@@ -185,7 +185,7 @@
   // Pinta un pedido con su tabla para entregar dentro de "caja". listo() vuelve a cargar la pantalla de afuera.
   async function pintarEntrega(caja, id, listo) {
     const [s, prods] = await Promise.all([
-      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre),orden:ordenes(id,numero),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
+      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
       EPT.cargarProductos(),
     ]);
     const ids = s.lineas.map(l => l.producto_id).filter(Boolean);

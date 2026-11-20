@@ -513,3 +513,11 @@ details.expediente[open]>summary{margin-bottom:16px}
   .paso-doc{margin-top:2px}
   .main{padding-bottom:20px}
 }
+
+/* historial de clientes: clientes por día */
+.barras-dia{display:grid;gap:6px}
+.barras-dia .bd{display:grid;grid-template-columns:110px minmax(0,1fr) 170px;gap:10px;align-items:center;font-size:14px}
+.barras-dia .bd-b{height:14px;border-radius:7px;background:var(--panel2);overflow:hidden}
+.barras-dia .bd-b i{display:block;height:100%;background:var(--marino);border-radius:7px}
+.barras-dia .bd-n{color:var(--mute)}
+@media (max-width:560px){.barras-dia .bd{grid-template-columns:90px minmax(0,1fr)}.barras-dia .bd-n{grid-column:1/-1}}

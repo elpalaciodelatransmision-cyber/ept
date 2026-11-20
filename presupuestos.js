@@ -279,13 +279,13 @@
   }
 
   async function convertir(p) {
-    const mecs = await EPT.leer(sb.from('mecanicos').select('id,nombre').eq('activo', true).order('nombre'));
+    const mecs = await EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre'));
     EPT.ventana({
       titulo: 'Convertir ' + prN(p.numero) + ' en orden de trabajo', boton: 'Crear la orden',
       cuerpo: `<p style="margin:0">Se crea la orden de <b>${esc(p.cliente_nombre)}</b>${vehiculoTxt(p) ? ' · ' + esc(vehiculoTxt(p)) : ''}.
           Las piezas se piden en el paso 3 (ya vienen puestas) y Caja cobra los precios de este presupuesto.</p>
         <p class="mute" style="margin:0">¿Falta o sobra algo? Cancele y toque «Agregar o quitar» primero.</p>
-        ${EPT.puede('mecanico.asignar') ? `<label class="campo">Mecánico<select name="mec"><option value="">— Sin asignar —</option>${mecs.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select></label>` : ''}
+        ${EPT.puede('mecanico.asignar') ? `<label class="campo">Mecánico o ayudante<select name="mec">${EPT.opcionesMec(mecs)}</select></label>` : ''}
         <div class="dos"><label class="campo">Kilometraje <small class="opc">(opcional)</small><input name="km" inputmode="numeric" maxlength="10"></label>
           <label class="campo">¿Por qué vino?<input name="motivo" maxlength="200" value="Presupuesto ${prN(p.numero)} aceptado"></label></div>`,
       async alGuardar(f) {

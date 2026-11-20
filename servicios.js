@@ -59,7 +59,7 @@
 
   async function pintarHechos() {
     const filas = await EPT.leer(sb.from('mano_obra')
-      .select('id,fecha,descripcion,importe,anulada,motivo_anulacion,servicio:servicios(codigo,nombre),mecanico:mecanicos(nombre),orden:ordenes(id,numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
+      .select('id,fecha,descripcion,importe,anulada,motivo_anulacion,servicio:servicios(codigo,nombre),mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
       .not('servicio_id', 'is', null).order('fecha', { ascending: false }).limit(300));
     const caja = EPT.$('#cajaServ');
     caja.innerHTML = `<div class="panel">${filas.length ? `<div class="desliza"><table class="tabla"><thead><tr>
@@ -142,7 +142,7 @@
   async function descargarExcel(servs, prods) {
     if (!window.XLSX) throw new Error('No se pudo cargar la herramienta de Excel. Revise la conexión.');
     const hechos = await EPT.leer(sb.from('mano_obra')
-      .select('fecha,descripcion,importe,anulada,motivo_anulacion,mecanico:mecanicos(nombre),orden:ordenes(numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
+      .select('fecha,descripcion,importe,anulada,motivo_anulacion,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(numero,cliente:clientes(nombre),vehiculo:vehiculos(marca,modelo,placa))')
       .not('servicio_id', 'is', null).order('fecha', { ascending: false }).limit(1000));
     const lista = [...servs].sort(porCodigo);
     const hoja1 = [['Código', 'Servicio', 'Parte de', 'Precio RD$', 'Descripción', 'Piezas que usa'],
