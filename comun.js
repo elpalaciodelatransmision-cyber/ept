@@ -116,6 +116,37 @@
   EPT.cargarProductos = () => EPT.memoria('productos', () => EPT.leerTodo(() => sb.from('productos')
     .select('id,codigo,descripcion,unidad,numero_parte,precio,usada,codigo_barras,en_almacen').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
 
+  // ---------- Mecánicos y ayudantes ----------
+  EPT.cargarMecanicos = () => EPT.memoria('mecanicos', () => EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre')),
+    { cambiaCon: /mecanico/ });
+  // mecánicos y ayudantes en la misma lista, separados en dos grupos
+  const gruposMec = (lista, sel) => [['mecanico', 'Mecánicos'], ['ayudante', 'Ayudantes']].map(([t, g]) => { const ms = lista.filter(m => (m.tipo || 'mecanico') === t);
+    return ms.length ? `<optgroup label="${g}">${ms.map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.nombre)}${t === 'ayudante' ? ' (ayudante)' : ''}</option>`).join('')}</optgroup>` : ''; }).join('');
+  EPT.opcionesMec = (lista, sel) => `<option value="">— Sin asignar —</option>` + gruposMec(lista, sel);
+  // «¿Quién se lo lleva?»: se elige el mecánico o el ayudante de la lista; si no está, «Otra persona» y se escribe el nombre.
+  // Se usa donde se entrega o se pide una pieza (Pedir repuestos, Despachar en Repuestos, Despacho a una persona del Almacén).
+  // Va dentro de un formulario o de cualquier caja; EPT.enlazarQuien(caja) le da vida y EPT.leerQuien(caja) devuelve
+  // { mecanico (id o null), persona (nombre escrito o ''), nombre (lo que se ve) } o avisa qué falta.
+  EPT.campoQuien = (lista, { etiqueta = '¿Quién se lo lleva?', sel = '', persona = '' } = {}) => `<div class="campo quien">
+      <label class="campo">${esc(etiqueta)}<select name="quien" required><option value="">Elija de la lista…</option>${gruposMec(lista, sel)}
+        <option value="otra" ${persona && !sel ? 'selected' : ''}>Otra persona (escribir el nombre)…</option></select></label>
+      <input name="quien_nombre" maxlength="120" placeholder="Nombre de quien se lo lleva" value="${esc(persona)}" ${persona && !sel ? '' : 'hidden'} aria-label="Nombre de quien se lo lleva"></div>`;
+  EPT.enlazarQuien = caja => {
+    const s = caja.querySelector('select[name=quien]'), t = caja.querySelector('input[name=quien_nombre]');
+    s.addEventListener('change', () => { s.classList.remove('falta'); t.hidden = s.value !== 'otra'; if (!t.hidden) t.focus(); });
+    t.addEventListener('input', () => t.classList.remove('falta'));
+  };
+  EPT.leerQuien = caja => {
+    const s = caja.querySelector('select[name=quien]'), t = caja.querySelector('input[name=quien_nombre]');
+    if (!s.value) { s.classList.add('falta'); s.focus(); throw new Error('Elija quién se lo lleva, o «Otra persona» y escriba el nombre'); }
+    if (s.value === 'otra') {
+      const n = t.value.trim();
+      if (!n) { t.classList.add('falta'); t.focus(); throw new Error('Escriba el nombre de quien se lo lleva'); }
+      return { mecanico: null, persona: n, nombre: n };
+    }
+    return { mecanico: s.value, persona: '', nombre: s.selectedOptions[0].textContent.trim() };
+  };
+
   // ---------- Familias y subfamilias del inventario (las usan el Almacén y Productos) ----------
   EPT.cargarFamilias = () => EPT.memoria('familias', async () => {
     const [fams, subs] = await Promise.all([
@@ -246,22 +277,60 @@
     }));
     return { poner: pintar };
   };
-  // buscador ya preparado (el texto de cada pieza se arma una sola vez, no en cada letra)
-  EPT.buscadorPiezas = prods => {
+  // ---------- Buscador de artículos (lo usan Almacén, Repuestos, Taller, Servicios y Presupuestos) ----------
+  // Encuentra aunque se escriba distinto a como está guardado:
+  //   · sin importar mayúsculas, tildes ni el orden de las palabras ("atf aceite" = "ACEITE ATF");
+  //   · palabras a medias ("acei atf", "filt transm");
+  //   · plural o singular ("guantes" encuentra GUANTE, "filtro" encuentra FILTROS);
+  //   · una letra de más, de menos o cambiada en palabras de 5 letras o más ("tranmision", "rodamieto");
+  //   · por código de la casa, código de barras, número de parte (con o sin guiones) y, si la pantalla los da
+  //     en "extra", por familia, subfamilia, tipo (pieza, insumo, misceláneo), marca y estante.
+  // Ordena lo más parecido primero: código exacto, código que empieza así, nombre que empieza así, y después el resto.
+  // El texto de cada artículo se arma una sola vez (no en cada letra) y queda guardado junto a la lista.
+  const sinPlural = w => w.length > 4 && /[^aeiou]es$/.test(w) ? w.slice(0, -2) : w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w;
+  // ¿"a" y "b" se diferencian en una sola letra (de más, de menos o cambiada)?
+  const casiIgual = (a, b) => {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0; while (i < a.length && a[i] === b[i]) i++;
+    if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+  };
+  EPT.buscadorPiezas = (prods, { extra } = {}) => {
     if (prods._buscador) return prods._buscador;
     const etiqueta = p => `${p.codigo} — ${p.descripcion}`;
-    const textos = prods.map(p => llano(`${p.codigo} ${p.descripcion} ${p.numero_parte || ''} ${String(p.numero_parte || '').replace(/[^a-z0-9]/gi, '')} ${p.codigo_barras || ''}${p.usada ? ' usada' : ''}`));
+    const datos = prods.map(p => {
+      const np = String(p.numero_parte || '');
+      const t = llano(`${p.codigo} ${p.descripcion} ${np} ${np.replace(/[^a-z0-9]/gi, '')} ${p.codigo_barras || ''}${p.usada ? ' usada' : ''} ${extra ? extra(p) : ''}`);
+      return { t, palabras: [...new Set(t.split(/[^a-z0-9ñ]+/).filter(Boolean))], cod: llano(p.codigo), nom: llano(p.descripcion) };
+    });
     const porEtiqueta = new Map(prods.map(p => [etiqueta(p).toLowerCase(), p]));
     // el código de la casa (ACE-001) o el código de barras llevan a la misma pieza
     const porCodigo = new Map([...prods.filter(p => p.codigo_barras).map(p => [String(p.codigo_barras).trim().toLowerCase(), p]),
       ...prods.map(p => [String(p.codigo).toLowerCase(), p])]);
+    // puntos de una palabra buscada dentro de un artículo (0 = no está)
+    const puntos = (d, w) => {
+      if (d.palabras.some(x => x.startsWith(w))) return 10;
+      if (d.t.includes(w)) return 6;
+      const s = sinPlural(w);
+      if (s !== w && d.palabras.some(x => x.startsWith(s))) return 9;
+      if (s.length >= 5 && d.palabras.some(x => casiIgual(x.slice(0, s.length), s) || casiIgual(x.slice(0, s.length + 1), s) || casiIgual(x.slice(0, s.length - 1), s))) return 3;
+      return 0;
+    };
     const b = {
       etiqueta,
-      buscar(q, max = 12) {
-        const palabras = llano(q).split(/\s+/).filter(Boolean); if (!palabras.length) return [];
+      // todos los que tienen TODAS las palabras, lo más parecido primero; max = cuántos devolver
+      buscar(q, max = 40) {
+        const texto = llano(q).trim(); const palabras = texto.split(/\s+/).filter(Boolean); if (!palabras.length) return [];
         const r = [];
-        for (let i = 0; i < prods.length && r.length < max; i++) if (palabras.every(w => textos[i].includes(w))) r.push(prods[i]);
-        return r;
+        for (let i = 0; i < prods.length; i++) {
+          const d = datos[i]; let total = 0;
+          for (const w of palabras) { const n = puntos(d, w); if (!n) { total = 0; break; } total += n; }
+          if (!total) continue;
+          if (d.cod === texto) total += 1000; else if (d.cod.startsWith(texto)) total += 200;
+          if (d.nom.startsWith(palabras[0])) total += 20;
+          r.push([total, i]);
+        }
+        return r.sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, max).map(x => prods[x[1]]);
       },
       // lo escrito o elegido en el campo → la pieza del catálogo (o null si es texto libre)
       deTexto: t => { const x = String(t || '').trim().toLowerCase(); return porEtiqueta.get(x) || porCodigo.get(x) || null; },
@@ -270,19 +339,21 @@
     return b;
   };
   // el campo: <input class="pz-busca"> con su lista debajo
-  EPT.campoPieza = (extra = '') => `<div class="busca-pieza"><input class="pz-busca" ${extra} placeholder="Código o nombre de la pieza" maxlength="120" autocomplete="off"><ul class="sugerencias" hidden></ul></div>`;
+  EPT.campoPieza = (extra = '', ayuda = 'Código o nombre de la pieza') => `<div class="busca-pieza"><input class="pz-busca" ${extra} placeholder="${esc(ayuda)}" maxlength="120" autocomplete="off"><ul class="sugerencias" hidden></ul></div>`;
   // da vida a todos los campos .pz-busca dentro de "caja" (también los que se agreguen después)
   // nada(texto) → html que se ofrece dentro de la lista cuando no se encuentra nada (un botón con data-nada); alNada(texto, campo) al tocarlo
-  EPT.sugerencias = (caja, prods, { alElegir, libre = true, nada, alNada } = {}) => {
-    const bp = EPT.buscadorPiezas(prods);
+  // detalle(p) → html de una segunda línea debajo del nombre (por ejemplo cuánto hay y de qué familia es)
+  // extra(p) → texto más por el que también se puede buscar (familia, tipo, marca, estante…)
+  EPT.sugerencias = (caja, prods, { alElegir, libre = true, nada, alNada, detalle, extra } = {}) => {
+    const bp = EPT.buscadorPiezas(prods, { extra });
     let espera = null;
     const lista = inp => inp.parentElement.querySelector('.sugerencias');
     const cerrar = inp => { const ul = lista(inp); ul.hidden = true; ul.innerHTML = ''; };
     const elegir = (inp, li) => { inp.value = li.dataset.v; cerrar(inp); if (alElegir) alElegir(inp, bp.deTexto(inp.value)); };
     const mostrar = inp => {
       const ul = lista(inp); const r = bp.buscar(inp.value);
-      ul.innerHTML = r.map((p, i) => `<li data-v="${esc(bp.etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}${p.usada ? ' <span class="marca-usada">USADA</span>' : ''}</li>`).join('')
-        || (inp.value.trim() ? `<li class="nada">${(nada && nada(inp.value.trim())) || (libre ? 'No está en el catálogo: se pedirá tal como lo escribió' : 'No se encontró. Pruebe con el código o otra palabra.')}</li>` : '');
+      ul.innerHTML = r.map((p, i) => `<li data-v="${esc(bp.etiqueta(p))}"${i === 0 ? ' class="activa"' : ''}><b>${esc(p.codigo)}</b> ${esc(p.descripcion)}${p.usada ? ' <span class="marca-usada">USADA</span>' : ''}${detalle ? `<small class="sug-det">${detalle(p)}</small>` : ''}</li>`).join('')
+        || (inp.value.trim() ? `<li class="nada">${(nada && nada(inp.value.trim())) || (libre ? 'No está en el catálogo: se pedirá tal como lo escribió' : 'No se encontró. Pruebe con otra palabra o con el código.')}</li>` : '');
       ul.hidden = !ul.innerHTML;
     };
     caja.addEventListener('input', e => {

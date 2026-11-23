@@ -85,13 +85,7 @@
   const presupuestoDe = o => o.presupuesto_id ? EPT.leer(sb.from('presupuestos').select('numero,lineas').eq('id', o.presupuesto_id).single()) : Promise.resolve(null);
   const prN = n => 'PR-' + String(n).padStart(4, '0');
 
-  async function mecanicosActivos() {
-    return EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre'));
-  }
-  // mecánicos y ayudantes en la misma lista, separados en dos grupos
-  EPT.opcionesMec = (lista, sel) => `<option value="">— Sin asignar —</option>` +
-    [['mecanico', 'Mecánicos'], ['ayudante', 'Ayudantes']].map(([t, g]) => { const ms = lista.filter(m => (m.tipo || 'mecanico') === t);
-      return ms.length ? `<optgroup label="${g}">${ms.map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.nombre)}${t === 'ayudante' ? ' (ayudante)' : ''}</option>`).join('')}</optgroup>` : ''; }).join('');
+  const mecanicosActivos = EPT.cargarMecanicos;
   const opcionesMec = EPT.opcionesMec;
 
   async function nuevaOrden() {
@@ -161,7 +155,7 @@
     const [o, sols, desp, saldo, mano, diags, notas, cons, devs, reqs] = await Promise.all([
       EPT.leer(sb.from('ordenes').select('*,cliente:clientes(id,nombre,telefono),vehiculo:vehiculos(id,marca,modelo,anio,placa),mecanico:mecanicos(id,nombre:nombre_lista)').eq('id', id).single()),
       EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,mecanico:mecanicos(nombre:nombre_lista),lineas:solicitud_lineas(id,descripcion,codigo,cantidad,unidad,despachada,recibida,observaciones)').eq('orden_id', id).order('numero')),
-      EPT.leer(sb.from('despachos').select('id,fecha,usuario:usuarios(nombre),lineas:despacho_lineas(id,cantidad,producto:productos(descripcion,unidad),recepcion:recepciones_taller(cantidad_recibida,fecha,nota))').eq('orden_id', id).order('fecha')),
+      EPT.leer(sb.from('despachos').select('id,fecha,entregado_a,mecanico:mecanicos(nombre:nombre_lista),usuario:usuarios(nombre),lineas:despacho_lineas(id,cantidad,producto:productos(descripcion,unidad),recepcion:recepciones_taller(cantidad_recibida,fecha,nota))').eq('orden_id', id).order('fecha')),
       EPT.rpc('ept_saldo_orden', { p_orden: id }),
       EPT.leer(sb.from('mano_obra').select('id,descripcion,importe,fecha,adicional,anulada,motivo_anulacion,mecanico:mecanicos(nombre:nombre_lista)').eq('orden_id', id).order('fecha')),
       EPT.leer(sb.from('diagnosticos').select('texto,fecha,usuario:usuarios(nombre)').eq('orden_id', id).order('fecha')),
@@ -405,7 +399,8 @@
     diags.forEach(d => ev.push({ f: d.fecha, t: 'Diagnóstico', q: d.usuario?.nombre }));
     sols.forEach(s => ev.push({ f: s.fecha, t: `Pidió repuestos S-${s.numero} (${s.lineas.length} pieza${s.lineas.length === 1 ? '' : 's'})`, q: s.mecanico?.nombre }));
     desp.forEach(d => {
-      ev.push({ f: d.fecha, t: 'Repuestos despachó: ' + d.lineas.map(l => `${num(l.cantidad)} ${l.producto.descripcion}`).join(', '), q: d.usuario?.nombre });
+      const aQuien = d.mecanico ? d.mecanico.nombre : d.entregado_a;
+      ev.push({ f: d.fecha, t: `Repuestos despachó${aQuien ? ' a ' + aQuien : ''}: ` + d.lineas.map(l => `${num(l.cantidad)} ${l.producto.descripcion}`).join(', '), q: d.usuario?.nombre });
       // desde el 12 nov la entrega queda recibida sola; solo se muestran las diferencias de antes
       d.lineas.forEach(l => l.recepcion.filter(r => Number(r.cantidad_recibida) !== Number(l.cantidad)).forEach(r => ev.push({ f: r.fecha,
         t: `Mecánico recibió ${num(r.cantidad_recibida)} de ${num(l.cantidad)} ${l.producto.descripcion}` + (r.nota ? ' — ' + r.nota : '') })));
@@ -460,12 +455,13 @@
       boton: sol ? 'Agregar al pedido' : 'Anotar piezas',
       cuerpo: `
         ${sol ? `<p class="pista" style="margin:0">Lo que escriba aquí se suma al pedido <b>S-${sol.numero}</b>.</p>`
-          : `<label class="campo">¿Quién las pide? (mecánico o ayudante)<select name="mecanico" required>${opcionesMec(mecs, o.mecanico_id).replace('— Sin asignar —', 'Elija…')}</select></label>`}
+          : EPT.campoQuien(mecs, { etiqueta: '¿Quién las pide?', sel: o.mecanico_id })}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
           ${delPres.length ? `<p class="pista" style="margin:0 0 6px">Se pusieron las piezas del presupuesto <b>${prN(pres.numero)}</b>. Puede quitar o agregar.</p>` : ''}
           <div id="renglones">${delPres.length ? delPres.map(renglon).join('') : renglon()}</div>
           <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>`,
       alAbrir(f) {
+        if (!sol) EPT.enlazarQuien(f);
         const caja = f.querySelector('#renglones');
         // al elegir una pieza, el cursor pasa a la cantidad
         EPT.sugerencias(caja, prods, { alElegir: inp => inp.closest('.renglon').querySelector('[name=cant]').focus() });
@@ -473,7 +469,7 @@
         caja.addEventListener('click', e => { if (e.target.closest('[data-quitar]') && caja.children.length > 1) e.target.closest('.renglon').remove(); });
       },
       async alGuardar(f) {
-        if (!sol && !f.mecanico.value) throw new Error('Elija el mecánico');
+        const quien = sol ? null : EPT.leerQuien(f);
         const lineas = [...f.querySelectorAll('#renglones .renglon')].map(r => {
           const texto = r.querySelector('[name=pieza]').value.trim(); const cant = Number(r.querySelector('[name=cant]').value);
           if (!texto) return null;
@@ -487,7 +483,7 @@
           const r = await EPT.rpc('ept_solicitud_agregar', { p_solicitud: sol.id, p_lineas: lineas });
           EPT.aviso(`${r.agregadas} pieza${r.agregadas === 1 ? '' : 's'} agregada${r.agregadas === 1 ? '' : 's'} a S-${r.numero}`); listo(); return;
         }
-        const r = await EPT.rpc('ept_solicitud_crear', { p_orden: o.id, p_mecanico: f.mecanico.value, p_lineas: lineas });
+        const r = await EPT.rpc('ept_solicitud_crear', { p_orden: o.id, p_mecanico: quien.mecanico, p_persona: quien.persona, p_lineas: lineas });
         EPT.aviso(`Pedido S-${r.numero} anotado. Toque Siguiente cuando esté completo.`); listo();
       },
     });

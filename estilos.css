@@ -521,3 +521,44 @@ details.expediente[open]>summary{margin-bottom:16px}
 .barras-dia .bd-b i{display:block;height:100%;background:var(--marino);border-radius:7px}
 .barras-dia .bd-n{color:var(--mute)}
 @media (max-width:560px){.barras-dia .bd{grid-template-columns:90px minmax(0,1fr)}.barras-dia .bd-n{grid-column:1/-1}}
+
+/* ---------- Buscador de artículos más fácil (23 nov) ---------- */
+/* segunda línea de cada resultado: cuánto hay, tipo, familia y estante */
+.sugerencias .sug-det{display:block;margin-top:3px;font-size:12.5px;color:var(--mute)}
+.sugerencias .sug-det b{font:inherit;font-weight:700;margin:0;color:var(--ink)}
+.sugerencias .sug-det .txt-malo b,.sugerencias .sug-det .txt-aviso b{color:inherit}
+.sugerencias li.activa .sug-det{color:var(--ink2)}
+/* en el documento: el buscador y, al lado, "Ver la lista" */
+.busca-doc{display:flex;gap:8px;align-items:flex-start}
+.busca-doc .busca-pieza{flex:1 1 auto}
+.busca-doc>button{flex:0 0 auto;min-height:46px}
+.busca-doc .sugerencias{max-height:min(420px,60vh)}
+/* Existencia: buscador grande arriba y botones de tipo */
+.buscador.grande{margin-bottom:12px}
+.buscador.grande input{min-height:50px;font-size:16px;border:2px solid var(--marino)}
+.botones-clase{margin:0 0 12px}
+.botones-clase small{margin-left:4px;color:var(--mute);font-weight:600}
+/* ventana "Elegir artículos" */
+dialog .botones-clase{margin:0}
+/* la lista se achica para que «Cerrar» se vea siempre, también en una laptop de 768 de alto */
+.lista.elegir{max-height:clamp(160px,calc(100dvh - 450px),460px)}
+dialog:has(.lista.elegir) form{gap:12px}
+.lista.elegir li{padding:10px 12px;min-height:56px}
+.lista.elegir .q span{white-space:normal}
+.lista.elegir .van{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;font-weight:700;font-size:13.5px;color:var(--marino);padding:6px 10px;border:1px solid var(--line2);border-radius:8px}
+.lista.elegir .van.si{background:var(--marino);border-color:var(--marino);color:var(--onmarino)}
+.lista.elegir .van .ico{width:16px;height:16px}
+@media (max-width:480px){.busca-doc{flex-wrap:wrap}.busca-doc .busca-pieza{flex-basis:100%}}
+/* en el celular el código va en la línea de abajo, así el nombre tiene todo el ancho */
+.lista.elegir .cod-movil{display:none}
+@media (max-width:480px){.lista.elegir .codigo{display:none}.lista.elegir .cod-movil{display:inline;font-family:ui-monospace,Consolas,monospace;font-weight:700}.lista.elegir li{gap:8px}}
+
+/* ---------- ¿Quién se lo lleva? (23 nov): lista de mecánicos y ayudantes, o el nombre escrito ---------- */
+.campo.quien{display:grid;gap:8px;min-width:0}
+.campo.quien>label.campo{margin:0}
+.quien-despacho{max-width:420px;margin-top:12px}
+.dos:has(>.campo.quien){align-items:start}
+/* aviso discreto del despacho directo: dice que es la excepción sin frenar a quien despacha */
+.nota-excepcion{display:flex;gap:10px;align-items:flex-start;margin:0;padding:10px 12px;border-left:3px solid var(--aviso);background:var(--panel2);border-radius:6px;font-size:14px;line-height:1.45;color:var(--ink2)}
+.nota-excepcion .ico{flex:0 0 auto;color:var(--aviso);margin-top:1px}
+.nota-excepcion b{color:var(--ink)}

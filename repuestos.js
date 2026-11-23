@@ -30,7 +30,7 @@
     pestana: 'Albaranes de salida', explica: 'Lo que SALE de Repuestos hacia las órdenes de trabajo. Toque un pedido para despacharlo dentro de su orden.',
     icono: 'entregar', grupo: 'Repuestos', atajo: 'Albaranes de salida', peso: 3, ver: verRep,
     async mostrar(v) {
-      const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
+      const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,pide_nombre,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
         .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha'))
         .then(l => l.filter(s => !s.orden || s.orden.paso === 4));
       const cuenta = k => sols.filter(s => s.estado === k).length;
@@ -40,7 +40,7 @@
           <span><b>${cuenta('pendiente_almacen')}</b> esperando al almacén</span></div>
         <div class="panel"><header><h2>Por despachar</h2></header>
           ${sols.length ? `<ul class="lista">${sols.map(s => `<li class="toca" data-sol="${s.id}"><span class="serie">${s.orden ? ot(s.orden.numero) : 'S-' + s.numero}</span>
-            <div class="q"><b>${s.orden ? esc([s.orden.vehiculo?.marca, s.orden.vehiculo?.modelo, s.orden.vehiculo?.placa].filter(Boolean).join(' ')) : 'Pedido sin orden'}${s.mecanico ? ' · ' + esc(s.mecanico.nombre) : ''}</b>
+            <div class="q"><b>${s.orden ? esc([s.orden.vehiculo?.marca, s.orden.vehiculo?.modelo, s.orden.vehiculo?.placa].filter(Boolean).join(' ')) : 'Pedido sin orden'}${s.mecanico || s.pide_nombre ? ' · ' + esc(s.mecanico ? s.mecanico.nombre : s.pide_nombre) : ''}</b>
               <span>S-${s.numero} · ${s.lineas.length} pieza${s.lineas.length === 1 ? '' : 's'} · ${fecha(s.fecha)}</span></div>${chip(s.estado)}</li>`).join('')}</ul>`
             : '<div class="vacio">No hay pedidos por despachar.</div>'}
         </div>`;
@@ -184,9 +184,9 @@
 
   // Pinta un pedido con su tabla para entregar dentro de "caja". listo() vuelve a cargar la pantalla de afuera.
   async function pintarEntrega(caja, id, listo) {
-    const [s, prods] = await Promise.all([
-      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
-      EPT.cargarProductos(),
+    const [s, prods, mecs] = await Promise.all([
+      EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,pide_nombre,mecanico:mecanicos(id,nombre:nombre_lista),orden:ordenes(id,numero),lineas:solicitud_lineas(id,producto_id,codigo,descripcion,cantidad,unidad,despachada,cerrada,observaciones)').eq('id', id).single()),
+      EPT.cargarProductos(), EPT.cargarMecanicos(),
     ]);
     const ids = s.lineas.map(l => l.producto_id).filter(Boolean);
     const [exR, exA, exU] = await Promise.all([existenciasDe(ids), existenciasDe(ids, 'almacen'), existenciasDe(ids, 'usadas')]);
@@ -194,7 +194,7 @@
     const hayPara = id => usada(id) ? exU[id] || 0 : exR[id] || 0;
     const abierta = ['pendiente', 'parcial', 'pendiente_almacen'].includes(s.estado);
     caja.innerHTML = `
-      <div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${esc(s.mecanico?.nombre || '')} · ${fecha(s.fecha)}</span>${chip(s.estado)}</div>
+      <div class="sol"><div class="fila"><b>S-${s.numero}</b><span class="mute">${s.mecanico || s.pide_nombre ? 'Lo pidió ' + esc(s.mecanico ? s.mecanico.nombre : s.pide_nombre) + ' · ' : ''}${fecha(s.fecha)}</span>${chip(s.estado)}</div>
         ${s.justificacion ? `<p class="mute" style="margin:4px 0">Justificación: ${esc(s.justificacion)}</p>` : ''}
         <div class="desliza"><table class="tabla entregar"><thead><tr><th>Pieza</th><th>Pidió</th><th>Despachado</th><th>Falta</th><th>Hay para despachar</th><th>En el Almacén</th>${abierta ? '<th>Despachar ahora</th>' : ''}</tr></thead><tbody>
         ${s.lineas.map(l => { const falta = l.cerrada ? 0 : Number(l.cantidad) - Number(l.despachada); const hay = hayPara(l.producto_id);
@@ -206,11 +206,13 @@
             <td class="hay">${l.producto_id ? num(hay) + (usada(l.producto_id) ? ' <small class="mute">usadas</small>' : '') : '—'}</td><td class="hayA">${l.producto_id && !usada(l.producto_id) ? num(exA[l.producto_id] || 0) : '—'}</td>
             ${abierta ? `<td>${falta > 0 ? `<input class="cant" type="number" min="0" max="${falta}" step="any" inputmode="decimal" value="${l.producto_id ? Math.min(falta, hay) : 0}">` : ''}</td>` : ''}</tr>`; }).join('')}
         </tbody></table></div>
+        ${abierta && EPT.puede('repuestos.despachar') ? `<div class="quien-despacho">${EPT.campoQuien(mecs, { sel: s.mecanico?.id || '', persona: s.mecanico ? '' : s.pide_nombre || '' })}</div>` : ''}
         ${abierta ? `<div class="botones" style="margin-top:10px">
           ${EPT.puede('repuestos.despachar') ? `<button type="button" class="prin" data-e="entregar">${icono('entregar')}Despachar</button>` : ''}
           ${EPT.puede('repuestos.requisicion') ? `<button type="button" data-e="faltante">Pedir lo que falta al Almacén</button>` : ''}
           ${EPT.puede('repuestos.despachar') ? `<button type="button" class="liso peque" data-e="cerrar">No se despachará el resto…</button>` : ''}</div>` : ''}
       </div>`;
+    if (caja.querySelector('select[name=quien]')) EPT.enlazarQuien(caja);
     // al elegir producto para una línea sin código se muestra su existencia
     const mostrarExistencia = async (inp, p) => {
       const tr = inp.closest('tr');
@@ -235,10 +237,12 @@
       const ls = filas().filter(x => x.cant > 0);
       if (!ls.length) { EPT.aviso('Escriba cuánto despacha', true); return; }
       const sinProd = ls.find(x => !x.pid); if (sinProd) { EPT.aviso(`Elija el producto de "${sinProd.l.descripcion}"`, true); return; }
+      let quien; try { quien = EPT.leerQuien(caja); } catch (e) { EPT.aviso(e.message, true); return; }
       be.disabled = true;
       try {
-        await EPT.rpc('ept_despachar', { p_solicitud: s.id, p_lineas: ls.map(x => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: x.cant })) });
-        EPT.aviso(s.orden ? 'Despachado. Cuando termine de despachar, toque Siguiente.' : 'Despachado.'); listo();
+        await EPT.rpc('ept_despachar', { p_solicitud: s.id, p_mecanico: quien.mecanico, p_persona: quien.persona,
+          p_lineas: ls.map(x => ({ solicitud_linea_id: x.l.id, producto_id: x.pid, cantidad: x.cant })) });
+        EPT.aviso(`Despachado a ${quien.nombre}.${s.orden ? ' Cuando termine de despachar, toque Siguiente.' : ''}`); listo();
       } catch (e) { EPT.aviso(EPT.error(e), true); be.disabled = false; }
     });
     const bf = boton('faltante');

@@ -279,7 +279,7 @@
   }
 
   async function convertir(p) {
-    const mecs = await EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre'));
+    const mecs = await EPT.cargarMecanicos();
     EPT.ventana({
       titulo: 'Convertir ' + prN(p.numero) + ' en orden de trabajo', boton: 'Crear la orden',
       cuerpo: `<p style="margin:0">Se crea la orden de <b>${esc(p.cliente_nombre)}</b>${vehiculoTxt(p) ? ' · ' + esc(vehiculoTxt(p)) : ''}.
