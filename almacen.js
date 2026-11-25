@@ -313,7 +313,7 @@
   // aplicación esté abierta y es el mismo para entradas, salidas, traslados y ajustes.
   const dosD = n => String(n).padStart(2, '0');
   const diaTxt = d => `${d.getFullYear()}-${dosD(d.getMonth() + 1)}-${dosD(d.getDate())}`;
-  const RAPIDOS = [['hoy', 'Hoy'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mes_pasado', 'Mes pasado'], ['anio', 'Este año']];
+  const RAPIDOS = [['hoy', 'Hoy'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mes_pasado', 'Mes pasado'], ['anio', 'Este año'], ['inicio', 'Todo, desde el inicio']];
   const rangoRapido = k => {
     const h = new Date(), y = h.getFullYear(), m = h.getMonth();
     if (k === 'hoy') return [h, h];
@@ -321,6 +321,12 @@
     if (k === 'mes_pasado') return [new Date(y, m - 1, 1), new Date(y, m, 0)];
     if (k === 'anio') return [new Date(y, 0, 1), h];
     return [new Date(y, m, 1), h];
+  };
+  const primerDia = async () => {
+    const [d, t] = await Promise.all([EPT.leer(sb.from('almacen_documentos').select('fecha').order('fecha').limit(1)),
+      EPT.leer(sb.from('transferencias').select('fecha_envio').order('fecha_envio').limit(1))]);
+    const fs = [d[0]?.fecha, t[0]?.fecha_envio].filter(Boolean).map(f => new Date(f));
+    return fs.length ? new Date(Math.min(...fs)) : new Date();
   };
   const periodo = { desde: diaTxt(rangoRapido('mes')[0]), hasta: diaTxt(new Date()) };
   // límites para el servidor: desde las 00:00 del primer día hasta antes de las 00:00 del día siguiente al último
@@ -397,7 +403,12 @@
     };
     v.querySelector('#pDesde').addEventListener('change', e => { if (e.target.value) fijar(e.target.value, periodo.hasta); v.querySelector('#pRapido').value = ''; });
     v.querySelector('#pHasta').addEventListener('change', e => { if (e.target.value) fijar(periodo.desde, e.target.value); v.querySelector('#pRapido').value = ''; });
-    v.querySelector('#pRapido').addEventListener('change', e => { if (e.target.value) { const [d, h] = rangoRapido(e.target.value); fijar(diaTxt(d), diaTxt(h)); } });
+    v.querySelector('#pRapido').addEventListener('change', async e => {
+      if (!e.target.value) return;
+      // «Todo, desde el inicio»: desde el día del primer albarán que se registró en el programa
+      if (e.target.value === 'inicio') { fijar(diaTxt(await primerDia()), diaTxt(new Date())); return; }
+      const [d, h] = rangoRapido(e.target.value); fijar(diaTxt(d), diaTxt(h));
+    });
     let t; v.querySelector('#bDocs').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { busquedas[clave] = e.target.value; pintar(); }, 150); });
     v.querySelectorAll('[data-f]').forEach(b => b.addEventListener('click', () => {
       filtro = busquedas[clave + ':f'] = b.dataset.f; v.querySelectorAll('[data-f]').forEach(x => x.setAttribute('aria-pressed', x === b)); pintar();
