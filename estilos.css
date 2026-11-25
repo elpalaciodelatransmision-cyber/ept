@@ -115,6 +115,7 @@ label.campo{display:grid;gap:6px;font-weight:600;font-size:14px;color:var(--ink2
 .lista .q{flex:1 1 auto;min-width:0;display:grid;gap:2px}
 .lista .q b{font-size:15.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lista .q span{font-size:13px;color:var(--mute);overflow-wrap:anywhere}
+.lista .q em.nom{font-style:normal;font-size:14px;overflow-wrap:anywhere}
 .lista .q>*{min-width:0}
 /* en las ventanas el nombre completo baja de línea en vez de cortarse */
 dialog .lista .q b{white-space:normal;overflow-wrap:anywhere}
@@ -562,3 +563,8 @@ dialog:has(.lista.elegir) form{gap:12px}
 .nota-excepcion{display:flex;gap:10px;align-items:flex-start;margin:0;padding:10px 12px;border-left:3px solid var(--aviso);background:var(--panel2);border-radius:6px;font-size:14px;line-height:1.45;color:var(--ink2)}
 .nota-excepcion .ico{flex:0 0 auto;color:var(--aviso);margin-top:1px}
 .nota-excepcion b{color:var(--ink)}
+/* existencia dicha en cajas y sueltas, y el conteo por cajas del ajuste (23 nov) */
+.existencia-grande .en-cajas{color:var(--ink2);font-size:14px}
+.por-cajas{display:grid;gap:6px;justify-items:start}
+.por-cajas label{display:flex;align-items:center;gap:8px;font-size:13.5px;white-space:nowrap}
+.doc-lineas .por-cajas input.cant{width:80px}

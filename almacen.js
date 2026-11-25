@@ -69,6 +69,14 @@
     .eq('en_almacen', true).order('codigo'))
     .then(l => l.map(p => ({ ...p, hay: Number((p.existencias || []).find(e => e.ubicacion === 'almacen')?.cantidad || 0) })));
   const bajo = p => Number(p.minimo) > 0 && p.hay <= Number(p.minimo);
+  // La existencia dicha como se cuenta en el estante: "2 cajas de 10 y 3 sueltas" (solo si el artículo tiene empaque)
+  const tieneEmpaque = p => Number(p.empaque_unidades) > 1 && !!p.empaque_nombre;
+  const empaquePlural = (p, n) => { const e = String(p.empaque_nombre).toLowerCase(); return n === 1 ? e : /[aeiou]$/.test(e) ? e + 's' : e + 'es'; };
+  const enEmpaques = (p, n = p.hay) => {
+    if (!tieneEmpaque(p) || !(n > 0)) return '';
+    const e = Number(p.empaque_unidades), c = Math.floor(n / e), r = Math.round((n - c * e) * 100) / 100;
+    return [c ? `${num(c)} ${empaquePlural(p, c)} de ${num(e)}` : '', r ? `${num(r)} suelta${r === 1 ? '' : 's'}` : ''].filter(Boolean).join(' y ');
+  };
 
   EPT.pantalla({
     id: 'inventario', titulo: 'Existencia del almacén', subtitulo: 'Por familia y subfamilia, con existencia y mínimo',
@@ -113,7 +121,7 @@
         v.querySelector('#cCero').textContent = lista.filter(p => p.hay <= 0).length;
         caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => `<li class="toca" data-a="${p.id}"><span class="codigo">${esc(p.codigo)}</span>
             <div class="q"><b>${esc(p.descripcion)}</b><span>${[CLASE_ART[p.clase_articulo], F.nombre(p.subfamilia_id), p.marca_pieza, p.numero_parte, p.estante ? 'Estante ' + p.estante : '', p.cobrable ? '' : 'No se cobra'].filter(Boolean).map(esc).join(' · ')}</span></div>
-            <div class="stock"><span class="${bajo(p) ? 'txt-malo' : p.hay <= 0 ? 'mute' : ''}"><b>${num(p.hay)}</b> ${esc(p.unidad)}</span>${Number(p.minimo) > 0 ? `<span class="mute">mín. ${num(p.minimo)}</span>` : ''}</div></li>`).join('')}</ul>`
+            <div class="stock"><span class="${bajo(p) ? 'txt-malo' : p.hay <= 0 ? 'mute' : ''}"><b>${num(p.hay)}</b> ${esc(p.unidad)}</span>${enEmpaques(p) ? `<span class="mute">${esc(enEmpaques(p))}</span>` : ''}${Number(p.minimo) > 0 ? `<span class="mute">mín. ${num(p.minimo)}</span>` : ''}</div></li>`).join('')}</ul>`
           : `<div class="vacio">${arts.length ? 'No hay artículos con esa búsqueda.' : 'Todavía no hay artículos en el almacén.'}</div>`;
       };
       let t; const bi = v.querySelector('#bInv');
@@ -171,7 +179,7 @@
     EPT.ventana({
       titulo: p.codigo + ' · ' + p.descripcion, boton: '',
       cuerpo: `
-        <div class="existencia-grande"><b class="${bajo(p) ? 'txt-malo' : ''}">${num(p.hay)}</b> ${esc(p.unidad)} en el almacén
+        <div class="existencia-grande"><b class="${bajo(p) ? 'txt-malo' : ''}">${num(p.hay)}</b> ${esc(p.unidad)} en el almacén${enEmpaques(p) ? ` <span class="en-cajas">(${esc(enEmpaques(p))})</span>` : ''}
           ${Number(p.minimo) > 0 ? `<span class="mute">· mínimo ${num(p.minimo)}</span>` : ''}${bajo(p) ? ' <span class="estado malo">Bajo el mínimo</span>' : ''}</div>
         <dl class="datos">
           <div><dt>Es</dt><dd>${esc(CLASE_ART[p.clase_articulo] || 'Pieza')}</dd></div>
@@ -475,9 +483,14 @@
             <td class="imp" style="text-align:right"></td>` : ''}`,
           despacho: `${art}<td class="hay">${num(p.hay)}</td>${cant}<td>${enSel}<br><small class="mute eq"></small></td>`,
           traslado: `${art}<td>${esc(p.estante || 'sin estante')}</td><td><input class="cant est" maxlength="40" value="${esc(l.estante)}" style="width:120px" aria-label="Estante nuevo"></td>`,
-          ajuste: `${art}<td>${num(p.hay)}</td>${cant}<td class="dif"></td>`,
+          // en el ajuste, si tiene empaque, se puede contar por cajas y sueltas: el programa suma las unidades
+          ajuste: `${art}<td>${num(p.hay)}${enEmpaques(p) ? `<br><small class="mute">${esc(enEmpaques(p))}</small>` : ''}</td>${tieneEmpaque(p)
+            ? `<td><div class="por-cajas"><label><input class="cant cj" type="number" min="0" step="1" inputmode="numeric" aria-label="${esc(empaquePlural(p, 2))}"> ${esc(empaquePlural(p, 2))} de ${num(p.empaque_unidades)}</label>
+                <label><input class="cant su" type="number" min="0" step="any" inputmode="decimal" aria-label="Sueltas"> sueltas</label>
+                <small class="mute">= <b class="tot-cajas">${l.cant === '' ? '—' : num(l.cant)}</b> ${esc(p.unidad)}</small></div></td>`
+            : cant}<td class="dif"></td>`,
         }[D.tipo];
-        return `<tr data-pid="${p.id}">${celdas}<td><button type="button" class="liso peque" data-quitar aria-label="Quitar">Quitar</button></td></tr>`; }).join('')}</tbody>`
+        return `<tr data-pid="${p.id}">${celdas}<td><button type="button" class="liso peque" data-quitar title="Saca el artículo de este documento. No cambia la existencia.">Sacar de la lista</button></td></tr>`; }).join('')}</tbody>`
         : '<tbody><tr><td class="vacio" style="padding:18px">Todavía no hay artículos. Escanee o escriba arriba.</td></tr></tbody>';
       v.querySelector('#btnGuardarDoc').textContent = `Guardar ${D.nombre.toLowerCase()}${lineas.length ? ` (${cuantos(lineas.length)})` : ''}`;
       if (conCosto) pintarTotales();
@@ -521,6 +534,11 @@
       const tr = e.target.closest('tr[data-pid]'); if (!tr) return;
       const l = lineas.find(x => x.p.id === tr.dataset.pid);
       if (e.target.classList.contains('c')) l.cant = e.target.value;
+      if (e.target.classList.contains('cj') || e.target.classList.contains('su')) {
+        const cj = tr.querySelector('.cj').value, su = tr.querySelector('.su').value;
+        l.cant = cj === '' && su === '' ? '' : Number(cj || 0) * Number(l.p.empaque_unidades) + Number(su || 0);
+        tr.querySelector('.tot-cajas').textContent = l.cant === '' ? '—' : num(l.cant);
+      }
       if (e.target.classList.contains('costo')) l.costo = e.target.value;
       if (e.target.classList.contains('est')) l.estante = e.target.value;
       calcular();

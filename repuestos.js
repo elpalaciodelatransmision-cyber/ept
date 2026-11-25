@@ -369,6 +369,15 @@
     return d.vehiculos.get(p.id).some(a => a.anio_desde != null && anios.every(y => y >= a.anio_desde && y <= (a.anio_hasta ?? 9999)));
   }
 
+  // Lo primero que se lee es QUÉ pieza es («Disco de fricción»); debajo va su nombre («#1 Brake (1-2-3-4)…»).
+  // La subfamilia se pone en singular solo cuando es un solo tipo de pieza; las que agrupan varias («Cárter, juntas y tapones») quedan igual.
+  const SINGULAR = { Discos: 'Disco', Filtros: 'Filtro', Convertidores: 'Convertidor', Bandas: 'Banda', Solenoides: 'Solenoide', Sensores: 'Sensor', Switches: 'Switch' };
+  function tipoPieza(p, d) {
+    const n = d.F.porSub.get(p.subfamilia_id)?.nombre || '';
+    if (n.includes(',')) return n;
+    return n.replace(/^(\S+)/, w => SINGULAR[w] || w);
+  }
+
   function pintarProductos() {
     const d = datosCat; const caja = EPT.$('#listaProd'); if (!caja || !d) return;
     const todas = EPT.llano(buscaProd.trim()).split(/\s+/).filter(Boolean);
@@ -381,7 +390,7 @@
       const e = d.ex[p.id] || {}; const r = e.repuestos || 0; const bajo = Number(p.minimo) > 0 && r <= Number(p.minimo);
       const trans = d.codigosTrans.get(p.id) || [];
       return `<li class="toca" data-p="${p.id}">${p.foto ? `<img class="mini" src="${esc(urlFoto(p.foto))}" alt="" loading="lazy">` : ''}<span class="codigo">${esc(p.codigo)}</span>
-        <div class="q"><b>${esc(p.descripcion)}</b><span>${esc(d.F.porSub.get(p.subfamilia_id)?.nombre || '')}${p.marca_pieza || p.numero_parte ? ' · ' : ''}${[p.marca_pieza, p.numero_parte].filter(Boolean).map(esc).join(' ')}${trans.length ? ' · ' + esc(trans.slice(0, 6).join(', ')) + (trans.length > 6 ? '…' : '') : ''}</span></div>
+        <div class="q">${tipoPieza(p, d) ? `<b>${esc(tipoPieza(p, d))}</b><em class="nom">${esc(p.descripcion)}</em>` : `<b>${esc(p.descripcion)}</b>`}<span>${[[p.marca_pieza, p.numero_parte].filter(Boolean).join(' '), trans.length ? trans.slice(0, 6).join(', ') + (trans.length > 6 ? '…' : '') : ''].filter(Boolean).map(esc).join(' · ')}</span></div>
         <div class="stock">${p.usada ? `<span><b>${num(e.usadas || 0)}</b> Usadas</span>${d.cuantas(p).nuevas != null ? `<span class="mute"><b>${num(d.cuantas(p).nuevas)}</b> Nuevas</span>` : ''}`
           : `<span class="${bajo ? 'txt-malo' : ''}"><b>${num(r)}</b> Rep.</span><span class="mute"><b>${num(e.almacen || 0)}</b> Alm.</span><span class="mute"><b>${num(d.cuantas(p).usadas)}</b> Usadas</span>`}</div></li>`; }).join('')}</ul>
       ${halladas.length > lista.length ? `<div class="pie-panel"><span class="mute">Se ven ${num(lista.length)} de ${num(halladas.length)}</span><button type="button" class="peque der" id="masProd">Mostrar 100 más</button></div>` : ''}`
