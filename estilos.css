@@ -445,6 +445,7 @@ details.expediente[open]>summary{margin-bottom:16px}
 /* documentos (albaranes) y presupuestos */
 .serie{flex:0 0 auto;min-width:78px;font:800 14.5px/1 system-ui;letter-spacing:.02em}
 .doc-nuevo{display:grid;gap:12px}
+.doc-nuevo>form{min-width:0}
 .paso-doc{display:flex;gap:10px;align-items:center;font-weight:700;font-size:15.5px;margin-top:8px}
 .paso-doc i{font-style:normal;width:26px;height:26px;flex:0 0 auto;border-radius:50%;background:var(--marino);color:var(--onmarino);display:grid;place-items:center;font-size:14px}
 .cab3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
@@ -560,11 +561,41 @@ dialog:has(.lista.elegir) form{gap:12px}
 .quien-despacho{max-width:420px;margin-top:12px}
 .dos:has(>.campo.quien){align-items:start}
 /* aviso discreto del despacho directo: dice que es la excepción sin frenar a quien despacha */
-.nota-excepcion{display:flex;gap:10px;align-items:flex-start;margin:0;padding:10px 12px;border-left:3px solid var(--aviso);background:var(--panel2);border-radius:6px;font-size:14px;line-height:1.45;color:var(--ink2)}
-.nota-excepcion .ico{flex:0 0 auto;color:var(--aviso);margin-top:1px}
-.nota-excepcion b{color:var(--ink)}
+/* Despacho: ¿a quién? (Repuestos, mecánico, ayudante u otra persona) */
+.seg.destinos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:560px;margin-bottom:10px}
+.seg.destinos button{padding:0 10px;min-width:0}
+.seg.destinos button+button{border-left:1px solid var(--line2)}
+@media (max-width:560px){.seg.destinos{grid-template-columns:1fr 1fr}.seg.destinos button:nth-child(n+3){border-top:1px solid var(--line2)}.seg.destinos button:nth-child(3){border-left:0}}
+.dos:has(>#cualQuien){align-items:start}
 /* existencia dicha en cajas y sueltas, y el conteo por cajas del ajuste (23 nov) */
 .existencia-grande .en-cajas{color:var(--ink2);font-size:14px}
 .por-cajas{display:grid;gap:6px;justify-items:start}
 .por-cajas label{display:flex;align-items:center;gap:8px;font-size:13.5px;white-space:nowrap}
 .doc-lineas .por-cajas input.cant{width:80px}
+
+/* Albaranes: período (desde / hasta), tipo, buscador y vista «Albaranes» o «Detalle por artículo» */
+.filtros-alb{display:grid;gap:10px;margin-bottom:14px}
+.filtros-alb .periodo{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+.filtros-alb .periodo .campo{flex:0 1 180px;min-width:140px}
+.filtros-alb .fila{align-items:center}
+.tabla.detalle-alb th,.tabla.detalle-alb td{text-align:left;vertical-align:top}
+.tabla.detalle-alb td:nth-child(5){white-space:normal;min-width:220px}
+.detalle-alb tr.primero td{border-top:2px solid var(--line2)}
+.detalle-alb tfoot td{border-top:2px solid var(--line2);padding-top:10px}
+.solo-imprimir{display:none}
+@media print{
+  .solo-imprimir{display:block;font-size:16px;margin:0 0 10px}
+  .filtros-alb{display:none!important}
+  .detalle-alb{font-size:11px}
+  .detalle-alb .mute{color:#444}
+}
+
+/* Existencia del almacén: lo que queda de cada artículo, resaltado */
+.queda{--c:var(--ok);flex:0 0 auto;display:grid;justify-items:center;gap:0;width:118px;padding:6px 8px;border-radius:8px;
+  border:1px solid color-mix(in srgb,var(--c) 55%,transparent);background:color-mix(in srgb,var(--c) 14%,transparent);text-align:center;white-space:nowrap}
+.queda.bajo{--c:var(--aviso)}.queda.agotado{--c:var(--malo)}
+.queda>small:first-child{font-size:11.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--c)}
+.queda b{font-size:24px;line-height:1.1;color:var(--c)}
+.queda>span{font-size:12px;color:var(--ink2)}
+.queda small.cj{font-size:11.5px;line-height:1.25;color:var(--mute);white-space:normal}
+@media (max-width:560px){.queda{width:92px;padding:5px 6px}.queda b{font-size:20px}.queda small.cj{font-size:10.5px}}

@@ -56,12 +56,12 @@
     ver: () => ['repuestos.recibir', 'repuestos.devolucion'].some(p => EPT.puede(p)),
     async mostrar(v) {
       const [trans, devs] = await Promise.all([
-        EPT.puede('repuestos.recibir') ? EPT.leer(sb.from('transferencias').select('id,numero,estado,fecha_envio,fecha_recibo,requisicion:requisiciones(numero,orden:ordenes(numero)),lineas:transferencia_lineas(id)').order('numero', { ascending: false }).limit(60)) : [],
+        EPT.puede('repuestos.recibir') ? EPT.leer(sb.from('transferencias').select('id,numero,estado,fecha_envio,fecha_recibo,comentario,requisicion:requisiciones(numero,orden:ordenes(numero)),lineas:transferencia_lineas(id)').order('numero', { ascending: false }).limit(60)) : [],
         EPT.puede('repuestos.devolucion') ? EPT.leer(sb.from('devoluciones').select('id,cantidad,fecha,observaciones,producto:productos(codigo,descripcion,unidad),orden:ordenes(numero)').eq('estado', 'pendiente').order('fecha')) : [],
       ]);
       const porRecibir = trans.filter(t => t.estado === 'en_transito');
       const item = t => `<li class="toca" data-t="${t.id}"><span class="serie">D-${t.numero}</span>
-        <div class="q"><b>Del almacén${t.requisicion ? ' · R-' + t.requisicion.numero : ''}${t.requisicion?.orden ? ' · ' + ot(t.requisicion.orden.numero) : ' · reposición'}</b>
+        <div class="q"><b>Del almacén${t.requisicion ? ' · R-' + t.requisicion.numero : ''}${t.requisicion?.orden ? ' · ' + ot(t.requisicion.orden.numero) : ' · ' + esc(t.comentario || 'reposición')}</b>
           <span>${t.lineas.length} pieza${t.lineas.length === 1 ? '' : 's'} · despachado ${fecha(t.fecha_envio)}${t.fecha_recibo ? ' · ingresó ' + fecha(t.fecha_recibo) : ''}</span></div>${(([x, c]) => `<span class="estado ${c}">${esc(x)}</span>`)(DES[t.estado] || [t.estado, ''])}</li>`;
       v.innerHTML = `
         ${EPT.puede('repuestos.recibir') ? `<div class="panel"><header><h2>Del almacén, por registrar</h2></header>
