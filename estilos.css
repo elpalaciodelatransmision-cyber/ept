@@ -197,6 +197,17 @@ button.peque{min-height:36px;padding:0 12px;font-size:14px}
 .seg.cobro{display:flex;margin-top:6px;max-width:360px}
 .seg.cobro button{flex:1}
 .seg.cobro button[data-cob="0"][aria-pressed=true]{background:var(--aviso);color:#111}
+/* Otros precios de un artículo (pieza suelta de un kit) */
+.otros-precios{display:grid;gap:6px}
+.otros-precios .op-filas{display:grid;gap:6px}
+.otro-precio{display:grid;grid-template-columns:minmax(0,1fr) 130px auto;gap:8px;align-items:center}
+.otros-precios .pista{margin:0}
+.otros-precios [data-op-agregar]{justify-self:start}
+.elegir-precio{display:grid;gap:8px}
+.elegir-precio button{display:flex;justify-content:space-between;gap:16px;text-align:left;min-height:48px}
+.elegir-precio button span{font-weight:600}
+.nota-kit{display:flex;gap:6px;align-items:flex-start;margin:6px 0 0;padding:6px 10px;border-radius:8px;font-size:13px;font-weight:600;line-height:1.35;background:color-mix(in srgb,var(--aviso) 16%,var(--panel));border:1px solid color-mix(in srgb,var(--aviso) 55%,var(--line));color:var(--ink)}
+.nota-kit .ico{flex:0 0 auto;width:16px;height:16px;margin-top:1px}
 .filtros-inv{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px}
 @media (max-width:640px){.filtros-inv{grid-template-columns:minmax(0,1fr)}}
 .dos{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
@@ -265,6 +276,10 @@ tr.anulada td small{text-decoration:none;display:inline-block}
 .contadores{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
 .contadores span{padding:6px 12px;border-radius:99px;background:var(--panel);border:1px solid var(--line);font-size:14px;color:var(--ink2)}
 .contadores b{color:var(--ink);font-size:15px}
+.contadores .filtro-cont{min-height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--line2);background:var(--panel);font-size:14px;color:var(--ink2);cursor:pointer}
+.contadores .filtro-cont.aviso b{color:var(--aviso)}.contadores .filtro-cont.malo b{color:var(--malo)}
+.contadores .filtro-cont[aria-pressed=true]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.contadores .filtro-cont[aria-pressed=true] b{color:inherit}
 .stock{display:grid;gap:2px;text-align:right;font-size:13.5px;white-space:nowrap}
 .pie-panel{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px 18px;border-top:1px solid var(--line)}
 .tabla.entregar input.cant{width:90px;min-height:40px;text-align:center;font-weight:700;font-size:16px}

@@ -14,7 +14,7 @@
   let vista = 'piezas', busca = '';
   EPT.pantalla({
     id: 'usadas', titulo: 'Piezas usadas', subtitulo: 'Lotes de piezas usadas que se compran; se piden en las órdenes como cualquier pieza',
-    icono: 'usada', grupo: 'Repuestos', atajo: 'Piezas usadas', ver, peso: 6,
+    icono: 'usada', grupo: 'Repuestos', atajo: 'Piezas usadas', ver, peso: 7,
     pestana: 'Piezas usadas', explica: 'Lotes de piezas usadas que se compran. Se piden en las órdenes como cualquier pieza.',
     async mostrar(v) {
       if (EPT.puede('usadas.registrar')) {

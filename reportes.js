@@ -20,70 +20,35 @@
   const cuenta = async q => { const { count, error } = await q; if (error) throw new Error(EPT.error(error)); return count || 0; };
   const cnt = t => sb.from(t).select('id', { count: 'exact', head: true });
 
-  // ---------- Tablero ----------
-  const F = { desde: haceDias(30), hasta: hoy(), mecanico: '', estado: '', q: '' };
-  EPT.pantalla({
-    id: 'tablero', titulo: 'Tablero', subtitulo: 'Todo lo que está pasando, sin preguntar departamento por departamento',
-    icono: 'tablero', grupo: 'Administración', atajo: 'Tablero', peso: -10, ver: () => EPT.puede('reportes.ver'),
-    async mostrar(v) {
-      const [abiertas, reparacion, esperando, solPend, reqPend, transito, porCaja, porCobrar, cerradas, difTaller, difTrans, devPend, autPend, mecs] = await Promise.all([
-        cuenta(cnt('ordenes').in('estado', ['abierta', 'en_reparacion', 'esperando_piezas', 'en_revision', 'en_caja', 'facturada'])),
-        cuenta(cnt('ordenes').eq('estado', 'en_reparacion')), cuenta(cnt('ordenes').eq('estado', 'esperando_piezas')),
-        cuenta(cnt('solicitudes').in('estado', ['pendiente', 'parcial'])), cuenta(cnt('requisiciones').in('estado', ['nueva', 'pendiente', 'aprobada', 'parcial'])),
-        cuenta(cnt('transferencias').eq('estado', 'en_transito')), cuenta(cnt('ordenes').eq('estado', 'en_caja')),
-        cuenta(cnt('facturas').in('estado', ['pendiente_pago', 'pago_parcial'])), cuenta(cnt('ordenes').eq('estado', 'cerrada').gte('actualizado', F.desde).lte('actualizado', F.hasta + 'T23:59:59')),
-        cuenta(sb.from('recepciones_taller').select('id', { count: 'exact', head: true }).neq('nota', '').gte('fecha', F.desde)),
-        cuenta(cnt('transferencias').eq('estado', 'con_diferencia')), cuenta(cnt('devoluciones').eq('estado', 'pendiente')),
-        cuenta(cnt('autorizaciones').eq('estado', 'pendiente')),
-        EPT.leer(sb.from('mecanicos').select('id,nombre:nombre_lista').order('nombre')),
-      ]);
-      const ind = [
-        ['Órdenes abiertas', abiertas, 'ordenes', ''], ['Vehículos en reparación', reparacion, 'ordenes', 'en_reparacion'], ['Esperando piezas', esperando, 'ordenes', 'esperando_piezas', esperando ? 'aviso' : ''],
-        ['Pedidos pendientes en Repuestos', solPend, 'pedidos', '', solPend ? 'aviso' : ''], ['Requisiciones pendientes de Almacén', reqPend, 'requisiciones', '', reqPend ? 'aviso' : ''],
-        ['Despachos del Almacén en camino', transito, 'transferencias', ''], ['Terminadas pendientes de Caja', porCaja, 'caja', '', porCaja ? 'aviso' : ''],
-        ['Facturas pendientes de pago', porCobrar, 'caja', '', porCobrar ? 'aviso' : ''], ['Órdenes cerradas en el período', cerradas, '', 'cerrada'],
-        ['Diferencias reportadas', difTaller + difTrans, 'transferencias', '', difTaller + difTrans ? 'malo' : ''], ['Devoluciones pendientes', devPend, 'pedidos', '', devPend ? 'aviso' : ''],
-        ['Autorizaciones esperando', autPend, 'autorizaciones', '', autPend ? 'aviso' : ''],
-      ];
-      v.innerHTML = `
-        <div class="rejilla">
-          <div class="panel"><header><h2>Ahora mismo</h2></header><ul class="lista indicadores">${ind.slice(0, 6).map(fila).join('')}</ul></div>
-          <div class="panel"><header><h2>Caja y control</h2></header><ul class="lista indicadores">${ind.slice(6).map(fila).join('')}</ul></div>
-        </div>
-        <div class="panel" style="margin-top:16px"><header><h2>Buscar órdenes</h2></header>
-          <div class="cuerpo filtros">
-            <label class="campo">Desde<input type="date" id="fDesde" value="${F.desde}"></label>
-            <label class="campo">Hasta<input type="date" id="fHasta" value="${F.hasta}"></label>
-            <label class="campo">Mecánico<select id="fMec"><option value="">Todos</option>${mecs.map(m => `<option value="${m.id}" ${F.mecanico === m.id ? 'selected' : ''}>${esc(m.nombre)}</option>`).join('')}</select></label>
-            <label class="campo">Estado<select id="fEst"><option value="">Todos</option>${Object.entries(ESTADOS).map(([k, t]) => `<option value="${k}" ${F.estado === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-            <label class="campo ancho2">Cliente, teléfono, placa, vehículo o número<input id="fQ" type="search" value="${esc(F.q)}"></label>
-          </div>
-          <div id="resOrdenes"></div></div>`;
-      v.querySelectorAll('[data-ir-ind]').forEach(li => li.addEventListener('click', () => {
-        if (li.dataset.estado) { F.estado = li.dataset.estado; v.querySelector('#fEst').value = F.estado; buscar(); v.querySelector('#resOrdenes').scrollIntoView({ behavior: 'smooth' }); }
-        else if (li.dataset.irInd) EPT.ir(li.dataset.irInd);
-      }));
-      const leerF = () => { F.desde = v.querySelector('#fDesde').value; F.hasta = v.querySelector('#fHasta').value; F.mecanico = v.querySelector('#fMec').value; F.estado = v.querySelector('#fEst').value; F.q = v.querySelector('#fQ').value.trim(); };
-      let t; v.querySelectorAll('.filtros input,.filtros select').forEach(x => x.addEventListener(x.type === 'search' ? 'input' : 'change', () => { clearTimeout(t); t = setTimeout(() => { leerF(); buscar(); }, 300); }));
-      await buscar();
-      function fila([t, n, ir, est, cls]) { return `<li class="toca" data-ir-ind="${ir}" data-estado="${est}"><div class="q"><b style="font-weight:600">${t}</b></div><b class="cifra ${cls ? 'txt-' + cls : ''}">${num(n)}</b></li>`; }
-    },
-  });
-
-  async function buscar() {
-    let q = sb.from('ordenes').select('id,numero,fecha,estado,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)')
-      .gte('fecha', F.desde).lte('fecha', F.hasta + 'T23:59:59').order('numero', { ascending: false }).limit(500);
-    if (F.mecanico) q = q.eq('mecanico_id', F.mecanico);
-    if (F.estado) q = q.eq('estado', F.estado);
-    let filas = await EPT.leer(q);
-    if (F.q) { const b = F.q.toLowerCase().replace(/[\s-]/g, ''); filas = filas.filter(o => [ot(o.numero), o.numero, o.cliente?.nombre, o.cliente?.telefono, o.vehiculo?.placa, o.vehiculo?.marca, o.vehiculo?.modelo].some(x => String(x || '').toLowerCase().replace(/[\s-]/g, '').includes(b))); }
-    const caja = EPT.$('#resOrdenes'); if (!caja) return;
-    caja.innerHTML = filas.length ? `<div class="desliza"><table class="tabla"><thead><tr><th>Orden</th><th>Fecha</th><th>Cliente</th><th>Vehículo</th><th>Mecánico</th><th>Estado</th></tr></thead><tbody>
-      ${filas.map(o => `<tr class="toca" data-o="${o.id}"><td><a href="#" data-o="${o.id}">${ot(o.numero)}</a></td><td>${dia(o.fecha)}</td><td>${esc(o.cliente?.nombre || '')}</td><td>${esc(veh(o.vehiculo))}</td><td>${esc(o.mecanico?.nombre || '')}</td><td>${esc(ESTADOS[o.estado] || o.estado)}</td></tr>`).join('')}
-      </tbody></table></div><p class="mute" style="margin:8px 18px 14px">${filas.length} orden${filas.length === 1 ? '' : 'es'}</p>`
-      : '<div class="vacio">No hay órdenes con esos filtros.</div>';
-    caja.querySelectorAll('[data-o]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); EPT.abrirOrden(a.dataset.o); }));
-  }
+  // ---------- Cifras del día (arriba del Inicio, para quien ve reportes) ----------
+  // Lo que antes era el «Tablero» de Administración: cada cifra lleva a la pantalla donde se trabaja.
+  EPT.indicadores = async () => {
+    const [abiertas, esperando, solPend, reqPend, transito, porCaja, porEntregar, difTrans, devPend, autPend] = await Promise.all([
+      cuenta(cnt('ordenes').in('estado', ['abierta', 'en_reparacion', 'esperando_piezas', 'en_revision', 'en_caja', 'facturada'])),
+      cuenta(cnt('ordenes').eq('estado', 'esperando_piezas')),
+      cuenta(cnt('solicitudes').in('estado', ['pendiente', 'parcial'])), cuenta(cnt('requisiciones').in('estado', ['nueva', 'pendiente', 'aprobada', 'parcial'])),
+      cuenta(cnt('transferencias').eq('estado', 'en_transito')), cuenta(cnt('ordenes').eq('estado', 'en_caja')),
+      cuenta(cnt('ordenes').eq('estado', 'cerrada').is('entregada_en', null)),
+      cuenta(cnt('transferencias').eq('estado', 'con_diferencia')), cuenta(cnt('devoluciones').eq('estado', 'pendiente')),
+      cuenta(cnt('autorizaciones').eq('estado', 'pendiente')),
+    ]);
+    const ind = [
+      ['Órdenes en proceso', abiertas, 'ordenes'], ['Esperando piezas', esperando, 'taller', esperando ? 'aviso' : ''],
+      ['Pedidos del taller por despachar', solPend, 'pedidos', solPend ? 'aviso' : ''], ['Pedidos de Repuestos al Almacén', reqPend, 'requisiciones', reqPend ? 'aviso' : ''],
+      ['Despachos del Almacén en camino', transito, 'rep_ingresos'],
+      ['Prefacturas en Caja', porCaja, 'caja', porCaja ? 'aviso' : ''], ['Vehículos pagados por entregar', porEntregar, 'ordenes', porEntregar ? 'aviso' : ''],
+      ['Diferencias por resolver', difTrans, 'rep_ingresos', difTrans ? 'malo' : ''], ['Devoluciones del taller por ingresar', devPend, 'rep_ingresos', devPend ? 'aviso' : ''],
+      ['Autorizaciones esperando', autPend, 'autorizaciones', autPend ? 'aviso' : ''],
+    ].filter(([, , ir]) => EPT.puedeVer(ir));
+    const fila = ([t, n, ir, cls]) => `<li class="toca" data-ir-ind="${ir}"><div class="q"><b style="font-weight:600">${t}</b></div><b class="cifra ${cls ? 'txt-' + cls : ''}">${num(n)}</b></li>`;
+    const mitad = Math.ceil(ind.length / 2);
+    return {
+      html: `<div class="rejilla" style="margin-bottom:20px">
+          <div class="panel"><header><h2>Así va el trabajo</h2></header><ul class="lista indicadores">${ind.slice(0, mitad).map(fila).join('')}</ul></div>
+          <div class="panel"><header><h2>Caja, entregas y control</h2></header><ul class="lista indicadores">${ind.slice(mitad).map(fila).join('')}</ul></div></div>`,
+      enlazar: v => v.querySelectorAll('[data-ir-ind]').forEach(li => li.addEventListener('click', () => EPT.ir(li.dataset.irInd))),
+    };
+  };
 
   // ---------- Reportes ----------
   // Cada reporte: título, columnas y cómo traer las filas para el período
@@ -138,7 +103,7 @@
   let ultimo = null;
 
   EPT.pantalla({
-    id: 'reportes', titulo: 'Reportes', subtitulo: 'Elija el reporte y el período; sáquelo en Excel o imprímalo en PDF',
+    id: 'reportes', peso: 2, titulo: 'Reportes', subtitulo: 'Elija el reporte y el período; sáquelo en Excel o imprímalo en PDF',
     icono: 'reporte', grupo: 'Administración', atajo: 'Reportes', ver: () => EPT.puede('reportes.ver'),
     async mostrar(v) {
       EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnRepXls">${icono('excel')}Excel</button><button type="button" id="btnRepPdf">${icono('imprimir')}PDF / imprimir</button>`;
@@ -199,7 +164,7 @@
   let ultimoHist = null;
 
   EPT.pantalla({
-    id: 'historial_clientes', titulo: 'Historial de clientes', pestana: 'Historial de clientes', icono: 'usuarios', grupo: 'Administración', atajo: 'Historial de clientes', peso: 2,
+    id: 'historial_clientes', titulo: 'Historial de clientes', pestana: 'Historial de clientes', icono: 'usuarios', grupo: 'Administración', atajo: 'Historial de clientes', peso: 3,
     explica: 'Los clientes atendidos por día, semana o mes: sus vehículos, sus órdenes, lo facturado, lo pagado y lo que deben.',
     ver: () => EPT.puede('reportes.ver'),
     async mostrar(v) {
@@ -288,7 +253,7 @@
     movimientos_inventario: 'Movimientos de inventario', ajustes_inventario: 'Ajustes', facturas: 'Facturas', pagos: 'Pagos', autorizaciones: 'Autorizaciones',
     productos: 'Productos', servicios: 'Servicios', usuarios: 'Usuarios', usuario_permisos: 'Permisos', mecanicos: 'Mecánicos', config: 'Configuración' };
   EPT.pantalla({
-    id: 'auditoria', titulo: 'Auditoría', subtitulo: 'Quién hizo qué, cuándo, y cómo estaba antes',
+    id: 'auditoria', peso: 6, titulo: 'Auditoría', subtitulo: 'Quién hizo qué, cuándo, y cómo estaba antes',
     icono: 'lupa', grupo: 'Administración', ver: () => EPT.puede('auditoria.ver'),
     async mostrar(v) {
       const usuarios = await EPT.leer(sb.from('usuarios').select('id,nombre').order('nombre'));

@@ -30,55 +30,86 @@
   const verTaller = () => ['orden.crear', 'orden.editar', 'solicitud.crear', 'consumo.registrar', 'orden.revisar', 'mano_obra.registrar']
     .some(p => EPT.puede(p));
 
-  let filtro = 'taller';
-  let buscado = '';
-
-  // ---------- Lista de órdenes ----------
-  EPT.pantalla({
-    id: 'ordenes', titulo: 'Órdenes de trabajo', subtitulo: 'Los carros que están en el taller',
-    icono: 'carro', grupo: 'Taller', atajo: 'Órdenes de trabajo', ver: verTaller,
-    async mostrar(v) {
-      if (EPT.puede('orden.crear')) {
-        EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevaOrden">${icono('mas')}Nueva orden</button>`;
-        EPT.$('#btnNuevaOrden').addEventListener('click', nuevaOrden);
-      }
-      v.innerHTML = `
-        <div class="fila" style="margin-bottom:14px">
-          <div class="buscador">${icono('buscar')}<input id="bOrden" type="search" placeholder="Placa, teléfono, cliente o número" value="${esc(buscado)}"></div>
-          <div class="seg" role="group" aria-label="Mostrar">
-            <button type="button" data-f="taller" aria-pressed="${filtro === 'taller'}">En el taller</button>
-            <button type="button" data-f="revision" aria-pressed="${filtro === 'revision'}">Por cerrar</button>
-            <button type="button" data-f="todas" aria-pressed="${filtro === 'todas'}">Todas</button>
+  // ---------- Listas de órdenes: una sola orden, una puerta por departamento ----------
+  // Repuestos recibe el carro y lo entrega; Taller ve los trabajos en curso. Las dos abren el mismo expediente.
+  // vistas: [clave, texto, filtro de la consulta]; cada pantalla recuerda su vista y lo buscado.
+  const VIVA = [...EN_TALLER, 'terminada', 'en_revision', 'en_caja', 'facturada'];
+  function pantallaOrdenes({ id, titulo, subtitulo, pestana, explica, grupo, peso, atajo, ver, vistas, vacio }) {
+    const estado = { vista: vistas[0][0], buscado: '' };
+    EPT.pantalla({
+      id, titulo, subtitulo, pestana, explica, icono: 'carro', grupo, peso, atajo, ver,
+      async mostrar(v) {
+        if (EPT.puede('orden.crear')) {
+          EPT.$('#barraBotones').innerHTML = `<button type="button" class="prin" id="btnNuevaOrden">${icono('mas')}Recibir un carro</button>`;
+          EPT.$('#btnNuevaOrden').addEventListener('click', nuevaOrden);
+        }
+        v.innerHTML = `
+          <div class="fila" style="margin-bottom:14px">
+            <div class="buscador">${icono('buscar')}<input id="bOrden" type="search" placeholder="Placa, teléfono, cliente o número" value="${esc(estado.buscado)}"></div>
+            <div class="seg" role="group" aria-label="Mostrar">${vistas.map(([k, t]) =>
+              `<button type="button" data-f="${k}" aria-pressed="${estado.vista === k}">${esc(t)}</button>`).join('')}</div>
           </div>
-        </div>
-        <div class="panel" id="listaOrdenes"><div class="vacio">Cargando…</div></div>`;
-      v.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { filtro = b.dataset.f; EPT.recargar(); }));
-      let t; v.querySelector('#bOrden').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { buscado = e.target.value.trim(); pintarLista(); }, 300); });
-      await pintarLista();
-    },
+          <div class="panel" id="listaOrdenes"><div class="vacio">Cargando…</div></div>`;
+        v.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { estado.vista = b.dataset.f; EPT.recargar(); }));
+        const filtro = () => vistas.find(x => x[0] === estado.vista)[2];
+        let t; v.querySelector('#bOrden').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { estado.buscado = e.target.value.trim(); pintarLista(filtro(), estado.buscado, vacio[estado.vista]); }, 300); });
+        await pintarLista(filtro(), estado.buscado, vacio[estado.vista]);
+      },
+    });
+  }
+
+  pantallaOrdenes({
+    id: 'ordenes', titulo: 'Recepción y entregas', subtitulo: 'Los carros que llegan y los que se entregan',
+    pestana: 'Recepción y entregas', explica: 'Recibir un carro (abre la orden), seguir cada orden y entregar el vehículo cuando Caja confirme el pago.',
+    grupo: 'Repuestos', peso: 1, atajo: 'Recepción y entregas',
+    ver: () => ['orden.crear', 'orden.entregar', 'orden.revisar', 'reportes.ver'].some(p => EPT.puede(p)),
+    vistas: [
+      ['proceso', 'En proceso', q => q.in('estado', VIVA)],
+      ['entregar', 'Para entregar', q => q.eq('estado', 'cerrada').is('entregada_en', null)],
+      ['todas', 'Todas', q => q],
+    ],
+    vacio: { proceso: 'No hay órdenes en proceso.', entregar: 'No hay vehículos esperando entrega.', todas: 'Todavía no hay órdenes.' },
   });
 
-  async function pintarLista() {
-    let q = sb.from('ordenes').select('id,numero,fecha,estado,paso,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)')
-      .order('numero', { ascending: false }).limit(100);
-    if (filtro === 'taller') q = q.in('estado', EN_TALLER);
-    if (filtro === 'revision') q = q.eq('estado', 'en_revision');
-    let filas = await EPT.leer(q);
+  pantallaOrdenes({
+    id: 'taller', titulo: 'Trabajos en curso', subtitulo: 'Diagnóstico, mecánico, piezas y trabajo terminado',
+    pestana: 'Trabajos en curso', explica: 'Los carros que están en el taller: diagnóstico, mecánico, piezas y terminar el trabajo.',
+    grupo: 'Taller', peso: 1, atajo: 'Trabajos en curso', ver: verTaller,
+    vistas: [
+      ['taller', 'En el taller', q => q.in('estado', EN_TALLER)],
+      ['revision', 'Por cerrar', q => q.eq('estado', 'en_revision')],
+    ],
+    vacio: { taller: 'No hay carros en el taller ahora.', revision: 'No hay órdenes esperando el cierre del expediente.' },
+  });
+
+  async function pintarLista(filtro, buscado, vacio) {
+    let q = sb.from('ordenes').select('id,numero,fecha,estado,paso,entregada_en,motivo,cliente:clientes(nombre,telefono),vehiculo:vehiculos(marca,modelo,anio,placa),mecanico:mecanicos(nombre:nombre_lista)')
+      .order('numero', { ascending: false }).limit(200);
+    let filas = await EPT.leer(filtro(q));
     if (buscado) {
       const b = buscado.toLowerCase().replace(/[\s-]/g, '');
       filas = filas.filter(o => [ot(o.numero), String(o.numero), o.cliente?.nombre, o.cliente?.telefono, o.vehiculo?.placa, o.vehiculo?.marca, o.vehiculo?.modelo]
         .some(x => String(x || '').toLowerCase().replace(/[\s-]/g, '').includes(b)));
     }
+    const estadoDe = o => EN_TALLER.includes(o.estado) || o.estado === 'en_revision' ? `<span class="estado info">Paso ${o.paso} · ${esc(EPT.PASOS[o.paso - 1])}</span>`
+      : o.estado === 'cerrada' && !o.entregada_en ? '<span class="estado aviso">Pagada: entregar</span>'
+      : o.estado === 'cerrada' ? '<span class="estado">Entregada</span>' : chip(ESTADOS, o.estado);
     const caja = EPT.$('#listaOrdenes'); if (!caja) return;
     caja.innerHTML = filas.length ? `<ul class="lista">${filas.map(o => `
       <li class="toca" data-id="${o.id}">
         <div class="q"><b>${ot(o.numero)} · ${esc([o.vehiculo?.marca, o.vehiculo?.modelo].filter(Boolean).join(' '))} ${esc(o.vehiculo?.placa || '')}</b>
           <span>${esc(o.cliente?.nombre || '')} · ${o.mecanico ? esc(o.mecanico.nombre) : 'sin mecánico'}</span></div>
-        ${EN_TALLER.includes(o.estado) || o.estado === 'en_revision' ? `<span class="estado info">Paso ${o.paso} · ${esc(EPT.PASOS[o.paso - 1])}</span>` : chip(ESTADOS, o.estado)}
+        ${estadoDe(o)}
       </li>`).join('')}</ul>`
-      : `<div class="vacio">${buscado ? 'No se encontró nada con eso.' : filtro === 'taller' ? 'No hay carros en el taller ahora.' : 'No hay órdenes aquí.'}</div>`;
+      : `<div class="vacio">${buscado ? 'No se encontró nada con eso.' : vacio}</div>`;
     caja.querySelectorAll('li[data-id]').forEach(li => li.addEventListener('click', () => abrirOrden(li.dataset.id)));
   }
+
+  // Inicio de Repuestos: recibir el carro y entregarlo son lo primero del día
+  EPT.verbo({ grupo: 'Repuestos', peso: 1, prin: true, titulo: 'Recibir un carro', sub: 'Abre la orden de trabajo', ir: 'ordenes', hacer: nuevaOrden, ver: () => EPT.puede('orden.crear') });
+  EPT.verbo({ grupo: 'Repuestos', peso: 2, titulo: 'Entregar un vehículo', sub: 'Ya pagó en Caja', ir: 'ordenes', ver: () => EPT.puede('orden.entregar'),
+    hacer: () => { const b = EPT.$('#vista [data-f="entregar"]'); if (b) b.click(); },
+    cuenta: () => EPT.leer(sb.from('ordenes').select('id').eq('estado', 'cerrada').is('entregada_en', null)).then(l => l.length) });
 
   // ---------- Nueva orden ----------
   // Presupuesto aceptado de la orden (si vino de uno): sus piezas se proponen al pedir y sus servicios llevan su precio
@@ -188,8 +219,8 @@
     const veh = [o.vehiculo.marca, o.vehiculo.modelo, o.vehiculo.anio].filter(Boolean).join(' ');
     EPT.$('#titulo').textContent = ot(o.numero);
     EPT.$('#subtitulo').textContent = `${veh} ${o.vehiculo.placa}`.trim();
-    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnVolver">${icono('atras')}Órdenes</button>`;
-    EPT.$('#btnVolver').addEventListener('click', () => EPT.ir('ordenes'));
+    EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnVolver">${icono('atras')}Volver</button>`;
+    EPT.$('#btnVolver').addEventListener('click', () => EPT.recargar());
 
     // una entrega se confirma una sola vez: el servidor la manda como objeto; se deja siempre como lista
     desp.forEach(d => d.lineas.forEach(l => { l.recepcion = l.recepcion ? [].concat(l.recepcion) : []; }));
@@ -330,7 +361,7 @@
     };
     if (p === 6) return {
       html: `<p class="guia">Revise lo que se va a cobrar: piezas usadas y mano de obra (${dinero(totalMano)}). Todo está en <b>Ver todo el expediente</b>.
-        Al cerrar se imprime la <b>orden de pago</b> para que el cliente pague en Caja.</p>${otro}`,
+        Al cerrar se imprime la <b>prefactura</b> para que el cliente pague en Caja.</p>${otro}`,
       pie: meToca && o.estado === 'en_revision' ? `${boton('devolver', 'atras', 'Volver al trabajo', 'liso')}
         <button type="button" class="accion siguiente" data-acc="aprobar">${icono('imprimir')}Cerrar expediente e imprimir</button>` : '',
     };
@@ -350,7 +381,7 @@
     return {
       html: espera(txt),
       pie: !EPT.abrirCobro ? '' : verCaja() ? `<button type="button" class="accion siguiente" data-acc="cobro">Facturar y cobrar${icono('adelante')}</button>`
-        : o.estado === 'en_caja' && EPT.puede('orden.revisar') ? `<button type="button" data-acc="cobro">${icono('imprimir')}Volver a imprimir la orden de pago</button>` : '',
+        : o.estado === 'en_caja' && EPT.puede('orden.revisar') ? `<button type="button" data-acc="cobro">${icono('imprimir')}Volver a imprimir la prefactura</button>` : '',
     };
   }
 
@@ -458,6 +489,7 @@
           : EPT.campoQuien(mecs, { etiqueta: '¿Quién las pide?', sel: o.mecanico_id })}
         <div><div class="renglon cab"><span>Pieza</span><span>Cantidad</span><span>Nota</span><span></span></div>
           ${delPres.length ? `<p class="pista" style="margin:0 0 6px">Se pusieron las piezas del presupuesto <b>${prN(pres.numero)}</b>. Puede quitar o agregar.</p>` : ''}
+          ${pres && pres.lineas.some(l => l.precio_nombre) ? `<p class="nota-kit">${icono('alerta')}<span>El presupuesto lleva ${esc(pres.lineas.filter(l => l.precio_nombre).map(l => l.descripcion).join(', '))}. ${esc(EPT.NOTA_KIT.replace(/^Pieza suelta de un kit: /, 'Es una pieza suelta de un kit: '))}</span></p>` : ''}
           <div id="renglones">${delPres.length ? delPres.map(renglon).join('') : renglon()}</div>
           <button type="button" id="otraPieza" style="margin-top:8px">${icono('mas')}Otra pieza</button></div>`,
       alAbrir(f) {
@@ -615,17 +647,17 @@
     });
   }
 
-  // Paso 6: Repuestos cierra el expediente e imprime la orden de pago que el cliente lleva a Caja,
+  // Paso 6: Repuestos cierra el expediente e imprime la prefactura que el cliente lleva a Caja,
   // o lo devuelve al Trabajo si falta algo.
   function revisar(o, aprobar, listo) {
     EPT.ventana({
       titulo: aprobar ? 'Cerrar expediente · ' + ot(o.numero) : 'Volver al trabajo', boton: aprobar ? 'Cerrar e imprimir' : 'Volver al trabajo',
-      cuerpo: aprobar ? `<p style="margin:0">¿Está todo lo que se va a cobrar? Se imprime la orden de pago y ${ot(o.numero)} pasa a Caja.</p>`
+      cuerpo: aprobar ? `<p style="margin:0">¿Está todo lo que se va a cobrar? Se imprime la prefactura y ${ot(o.numero)} pasa a Caja.</p>`
         : `<label class="campo">¿Qué falta o hay que corregir?<textarea name="nota" required maxlength="500"></textarea></label>`,
       async alGuardar(f) {
         await EPT.rpc('ept_orden_revisar', { p_orden: o.id, p_aprobar: aprobar, p_nota: aprobar ? '' : f.nota.value });
         if (!aprobar) { EPT.aviso('Devuelta al trabajo'); listo(); return; }
-        EPT.aviso('Expediente cerrado: imprima la orden de pago');
+        EPT.aviso('Expediente cerrado: imprima la prefactura');
         await EPT.abrirCobro(o.id);
         setTimeout(() => window.print(), 300);
       },

@@ -53,7 +53,7 @@
   // Existencia del almacén, por familias y subfamilias
   // El Almacén la maneja; Repuestos solo la consulta para hacer sus pedidos.
   // =====================================================================
-  let claseInv = '', famInv = '', subInv = '', buscaInv = '';
+  let claseInv = '', famInv = '', subInv = '', buscaInv = '', soloInv = ''; // soloInv: '' todo · 'bajo' bajo el mínimo · 'cero' agotados
   // Lo que el buscador también entiende de un artículo del almacén (además de código, nombre, referencia y barras),
   // y la segunda línea que se ve en cada resultado: cuánto hay, el tipo, la familia y el estante.
   const extraAlm = F => p => [F.nombre(p.subfamilia_id), CLASE_ART[p.clase_articulo], p.marca_pieza, p.estante ? 'estante ' + p.estante : ''].join(' ');
@@ -65,7 +65,7 @@
     .map(([k, t]) => [k, t, k ? arts.filter(p => p.clase_articulo === k).length : arts.length]).filter(([k, , n]) => !k || n)
     .map(([k, t, n]) => `<button type="button" data-clase="${k}" aria-pressed="${k === actual}">${esc(t)} <small>${n}</small></button>`).join('')}</div>`;
   const cargarInventario = () => EPT.leer(sb.from('productos')
-    .select('id,codigo,descripcion,unidad,marca_pieza,numero_parte,minimo,notas,subfamilia_id,cobrable,codigo_barras,estante,empaque_nombre,empaque_unidades,activo,precio,costo,ultimo_costo,clase_articulo,existencias(ubicacion,cantidad)')
+    .select('id,codigo,descripcion,unidad,marca_pieza,numero_parte,minimo,notas,subfamilia_id,cobrable,codigo_barras,estante,empaque_nombre,empaque_unidades,activo,precio,precios_extra,costo,ultimo_costo,clase_articulo,existencias(ubicacion,cantidad)')
     .eq('en_almacen', true).order('codigo'))
     .then(l => l.map(p => ({ ...p, hay: Number((p.existencias || []).find(e => e.ubicacion === 'almacen')?.cantidad || 0) })));
   const bajo = p => Number(p.minimo) > 0 && p.hay <= Number(p.minimo);
@@ -112,23 +112,31 @@
           <label class="campo">Subfamilia<select id="fSub" ${famInv ? '' : 'disabled'}><option value="">Todas</option>
             ${famInv ? F.subsDe(famInv).filter(s => deClase.some(p => p.subfamilia_id === s.id)).map(s => `<option value="${s.id}" ${s.id === subInv ? 'selected' : ''}>${esc(s.nombre)} (${deClase.filter(p => p.subfamilia_id === s.id).length})</option>`).join('') : ''}</select></label>
         </div>
-        <div class="contadores" style="margin:0 0 12px"><span id="cVan"></span><span class="txt-malo"><b id="cBajo">0</b> bajo el mínimo</span><span><b id="cCero">0</b> sin existencia</span></div>
+        <div class="contadores" style="margin:0 0 12px"><span id="cVan"></span>
+          <button type="button" class="filtro-cont aviso" data-solo="bajo" aria-pressed="${soloInv === 'bajo'}"><b id="cBajo">0</b> bajo el mínimo: reponer</button>
+          <button type="button" class="filtro-cont malo" data-solo="cero" aria-pressed="${soloInv === 'cero'}"><b id="cCero">0</b> agotados</button></div>
         <div class="panel" id="listaInv"></div>`;
       v.querySelectorAll('[data-clase]').forEach(b => b.addEventListener('click', () => { claseInv = b.dataset.clase; famInv = ''; subInv = ''; EPT.recargar(); }));
       v.querySelector('#fFam').addEventListener('change', e => { famInv = e.target.value; subInv = ''; EPT.recargar(); });
       v.querySelector('#fSub').addEventListener('change', e => { subInv = e.target.value; pintar(); });
+      v.querySelectorAll('[data-solo]').forEach(b => b.addEventListener('click', () => {
+        soloInv = soloInv === b.dataset.solo ? '' : b.dataset.solo;
+        v.querySelectorAll('[data-solo]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.solo === soloInv))); pintar();
+      }));
       const caja = v.querySelector('#listaInv');
       const pintar = () => {
         // con algo escrito, lo más parecido primero; sin nada, en orden alfabético
         const base = buscaInv.trim() ? bp.buscar(buscaInv, Infinity) : activos;
-        const lista = base.filter(p => (!claseInv || p.clase_articulo === claseInv) && (!famInv || F.porSub.get(p.subfamilia_id)?.familia_id === famInv) && (!subInv || p.subfamilia_id === subInv));
+        const filtrada = base.filter(p => (!claseInv || p.clase_articulo === claseInv) && (!famInv || F.porSub.get(p.subfamilia_id)?.familia_id === famInv) && (!subInv || p.subfamilia_id === subInv));
+        // «bajo el mínimo» incluye los agotados que tienen mínimo: es la lista de lo que hay que reponer
+        const lista = soloInv === 'bajo' ? filtrada.filter(bajo) : soloInv === 'cero' ? filtrada.filter(p => p.hay <= 0) : filtrada;
         v.querySelector('#cVan').innerHTML = `<b>${lista.length}</b> artículo${lista.length === 1 ? '' : 's'}`;
-        v.querySelector('#cBajo').textContent = lista.filter(bajo).length;
-        v.querySelector('#cCero').textContent = lista.filter(p => p.hay <= 0).length;
+        v.querySelector('#cBajo').textContent = filtrada.filter(bajo).length;
+        v.querySelector('#cCero').textContent = filtrada.filter(p => p.hay <= 0).length;
         caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => `<li class="toca" data-a="${p.id}"><span class="codigo">${esc(p.codigo)}</span>
             <div class="q"><b>${esc(p.descripcion)}</b><span>${[CLASE_ART[p.clase_articulo], F.nombre(p.subfamilia_id), p.marca_pieza, p.numero_parte, p.estante ? 'Estante ' + p.estante : '', p.cobrable ? '' : 'No se cobra'].filter(Boolean).map(esc).join(' · ')}</span></div>
             ${cuadroQueda(p)}</li>`).join('')}</ul>`
-          : `<div class="vacio">${arts.length ? 'No hay artículos con esa búsqueda.' : 'Todavía no hay artículos en el almacén.'}</div>`;
+          : `<div class="vacio">${!arts.length ? 'Todavía no hay artículos en el almacén.' : soloInv === 'bajo' ? 'Nada bajo el mínimo: no hay que reponer.' : soloInv === 'cero' ? 'No hay artículos agotados.' : 'No hay artículos con esa búsqueda.'}</div>`;
       };
       let t; const bi = v.querySelector('#bInv');
       bi.addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { buscaInv = e.target.value; pintar(); }, 150); });
@@ -192,6 +200,7 @@
           <div class="ancho"><dt>Familia · Subfamilia</dt><dd>${esc(F.nombre(p.subfamilia_id))}</dd></div>
           <div><dt>Estante</dt><dd>${esc(p.estante || '—')}</dd></div>
           <div><dt>Precio de venta</dt><dd>${Number(p.precio) > 0 ? dinero(p.precio) : '<span class="txt-aviso">Sin precio</span>'}</dd></div>
+          ${(p.precios_extra || []).length ? `<div class="ancho"><dt>Otros precios (pieza suelta del kit)</dt><dd>${EPT.otrosPreciosTexto(p.precios_extra)}</dd></div>` : ''}
           ${puedeAlm('articulos') || puedeAlm('ingreso') ? `<div><dt>Último costo</dt><dd>${Number(p.ultimo_costo) > 0 ? dinero(p.ultimo_costo) : '—'}</dd></div>
             <div><dt>Costo promedio</dt><dd>${Number(p.costo) > 0 ? dinero(p.costo) : '—'}</dd></div>` : ''}
           ${puedeAlm('articulos') ? '' : `<div><dt>Al cliente</dt><dd>${p.cobrable ? 'Se cobra' : 'No se cobra'}</dd></div>`}
@@ -245,6 +254,7 @@
         ${EPT.botonesCobro(p ? p.cobrable : null, { etiqueta: 'Cuando se usa en una orden' })}
         <div class="dos"><label class="campo">Precio de venta RD$<input name="precio" type="number" min="0" step="any" inputmode="decimal" value="${p && Number(p.precio) > 0 ? p.precio : ''}"></label>
           ${p ? `<div class="campo">Costo <small class="opc">(lo ponen las facturas de compra)</small><span class="valor-fijo">Último ${Number(p.ultimo_costo) > 0 ? dinero(p.ultimo_costo) : '—'} · Promedio ${Number(p.costo) > 0 ? dinero(p.costo) : '—'}</span></div>` : '<div></div>'}</div>
+        ${EPT.otrosPreciosCampos(p ? p.precios_extra : [])}
         <div class="dos"><label class="campo">Marca <small class="opc">(opcional)</small><input name="marca" maxlength="60" value="${esc(p ? p.marca_pieza : '')}"></label>
           <label class="campo">Referencia <small class="opc">(opcional)</small><input name="ref" maxlength="60" value="${esc(p ? p.numero_parte : '')}"></label></div>
         <div class="dos"><label class="campo">Unidad<select name="unidad">${['UNID', 'GALÓN', 'LITRO', 'CUARTO', 'PAR', 'JUEGO', 'PIE', 'METRO', 'LIBRA', 'CAJAS'].map(u => `<option ${u === (p ? p.unidad : 'UNID') ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
@@ -258,6 +268,7 @@
         ${nuevo ? '<p class="mute" style="margin:0">La existencia entra con una factura de compra o un ingreso interno.</p>' : ''}`,
       alAbrir(f, d) {
         EPT.enlazarCobro(f);
+        EPT.enlazarOtrosPrecios(f);
         const segClase = [...f.querySelectorAll('.clase-art [data-cl]')];
         const ponerClase = k => { f.clase.value = k; segClase.forEach(b => b.setAttribute('aria-pressed', b.dataset.cl === k)); };
         segClase.forEach(b => b.addEventListener('click', () => { ponerClase(b.dataset.cl); claseTocada = true; }));
@@ -279,10 +290,11 @@
       async alGuardar(f) {
         if (!f.desc.value.trim()) { f.desc.classList.add('falta'); f.desc.focus(); throw new Error('Escriba el nombre'); }
         if (!f.subfamilia.value) { f.familia.classList.add('falta'); f.familia.focus(); throw new Error('Elija la familia y la subfamilia'); }
+        const otros = EPT.leerOtrosPrecios(f);
         if (f.emp.value && !(Number(f.porEmp.value) > 1)) { f.porEmp.classList.add('falta'); f.porEmp.focus(); throw new Error('Escriba cuántas unidades trae cada ' + f.emp.value.toLowerCase()); }
         const r = await EPT.rpc('ept_almacen_articulo_guardar', { p: {
           id: p ? p.id : null, codigo: nuevo ? f.codigo.value : undefined, descripcion: f.desc.value, subfamilia_id: f.subfamilia.value, cobrable: EPT.seCobra(f),
-          clase_articulo: f.clase.value, precio: f.precio.value, unidad: f.unidad.value, marca_pieza: f.marca.value, numero_parte: f.ref.value, minimo: f.minimo.value,
+          clase_articulo: f.clase.value, precio: f.precio.value, precios_extra: otros, unidad: f.unidad.value, marca_pieza: f.marca.value, numero_parte: f.ref.value, minimo: f.minimo.value,
           empaque_nombre: f.emp.value, empaque_unidades: f.emp.value ? f.porEmp.value : 1, codigo_barras: f.barras.value, notas: f.notas.value,
           estante: nuevo ? f.estante.value : undefined } });
         EPT.olvidar('productos');
@@ -435,7 +447,7 @@
   };
 
   EPT.pantalla({
-    id: 'alm_ingresos', titulo: 'Albaranes de entrada', pestana: 'Albaranes de entrada', grupo: 'Almacén', icono: 'ingreso', peso: 2,
+    id: 'alm_ingresos', titulo: 'Albaranes de entrada', pestana: 'Albaranes de entrada', grupo: 'Almacén', icono: 'ingreso', peso: 3,
     explica: 'Todo lo que ENTRA al almacén: facturas de compra de los suplidores (suman la existencia y ponen el costo al día) e ingresos internos.',
     ver: () => puedeAlm('ingreso') || EPT.puede('reportes.ver'),
     async mostrar(v) {
@@ -450,7 +462,7 @@
   });
 
   EPT.pantalla({
-    id: 'alm_despachos', titulo: 'Albaranes de salida', pestana: 'Albaranes de salida', grupo: 'Almacén', icono: 'despacho', peso: 3,
+    id: 'alm_despachos', titulo: 'Albaranes de salida', pestana: 'Albaranes de salida', grupo: 'Almacén', icono: 'despacho', peso: 4,
     explica: 'Todo lo que SALE del almacén: a Repuestos (D), a un mecánico, ayudante u otra persona (DP) o devuelto al suplidor (DS).',
     ver: () => ['almacen.despacho', 'almacen.transferir', 'almacen.diferencia', 'reportes.ver'].some(p => EPT.puede(p)),
     async mostrar(v) {
@@ -477,7 +489,7 @@
   });
 
   EPT.pantalla({
-    id: 'alm_traslados', titulo: 'Traslados', pestana: 'Traslados', grupo: 'Almacén', icono: 'traslado', peso: 4,
+    id: 'alm_traslados', titulo: 'Traslados', pestana: 'Traslados', grupo: 'Almacén', icono: 'traslado', peso: 5,
     explica: 'Cambiar artículos de estante dentro del almacén. La cantidad no cambia.',
     ver: () => puedeAlm('traslado') || EPT.puede('reportes.ver'),
     async mostrar(v) {
@@ -488,7 +500,7 @@
   });
 
   EPT.pantalla({
-    id: 'alm_ajustes', titulo: 'Ajustes', pestana: 'Ajustes', grupo: 'Almacén', icono: 'ajuste', peso: 5,
+    id: 'alm_ajustes', titulo: 'Ajustes', pestana: 'Ajustes y conteo', grupo: 'Almacén', icono: 'ajuste', peso: 6,
     explica: 'Corregir la existencia después de contar (toma de inventario): se escribe lo contado y el programa ajusta la diferencia.',
     ver: () => puedeAlm('ajustar') || EPT.puede('reportes.ver'),
     async mostrar(v) {
@@ -855,7 +867,7 @@
   EPT.listaRequisiciones = listaRequisiciones;
 
   EPT.pantalla({
-    id: 'requisiciones', titulo: 'Pedidos de Repuestos', pestana: 'Pedidos de Repuestos', grupo: 'Almacén', icono: 'deposito', peso: 6,
+    id: 'requisiciones', titulo: 'Pedidos de Repuestos', pestana: 'Pedidos de Repuestos', grupo: 'Almacén', icono: 'deposito', peso: 2,
     explica: 'Lo que Repuestos le pide al almacén (requisiciones R-). Se aprueba y se despacha a Repuestos.',
     ver: () => ['almacen.resolver', 'almacen.transferir', 'almacen.diferencia'].some(p => EPT.puede(p)),
     mostrar: listaRequisiciones,

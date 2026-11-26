@@ -22,7 +22,7 @@
   const campoDe = h => Object.keys(ALIAS).find(k => ALIAS[k].includes(limpio(h)));
 
   EPT.pantalla({
-    id: 'integracion', titulo: 'Importar y exportar', subtitulo: 'Excel o CSV, y la conexión futura con el programa de Almacén',
+    id: 'integracion', peso: 5, titulo: 'Importar y exportar', subtitulo: 'Excel o CSV, y la conexión futura con el programa de Almacén',
     icono: 'enlace', grupo: 'Administración', ver: () => EPT.puede('integracion.gestionar'),
     async mostrar(v) {
       const [conectores, historial] = await Promise.all([

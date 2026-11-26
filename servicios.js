@@ -24,7 +24,7 @@
   let vistaServ = 'catalogo';
 
   EPT.pantalla({
-    id: 'servicios', titulo: 'Servicios', subtitulo: 'Lo que ofrece el taller y lo que se ha hecho',
+    id: 'servicios', pestana: 'Lista de servicios', peso: 2, titulo: 'Servicios', subtitulo: 'Lo que ofrece el taller y lo que se ha hecho',
     icono: 'servicio', grupo: 'Taller', atajo: 'Servicios',
     ver: () => EPT.puede('servicios.gestionar') || EPT.puede('mano_obra.registrar') || EPT.puede('orden.revisar') || EPT.puede('reportes.ver'),
     async mostrar(v) {

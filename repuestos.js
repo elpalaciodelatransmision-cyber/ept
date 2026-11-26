@@ -28,7 +28,7 @@
   EPT.pantalla({
     id: 'pedidos', titulo: 'Despachos a las órdenes', subtitulo: 'Lo que piden las órdenes de trabajo',
     pestana: 'Albaranes de salida', explica: 'Lo que SALE de Repuestos hacia las órdenes de trabajo. Toque un pedido para despacharlo dentro de su orden.',
-    icono: 'entregar', grupo: 'Repuestos', atajo: 'Albaranes de salida', peso: 3, ver: verRep,
+    icono: 'entregar', grupo: 'Repuestos', atajo: 'Albaranes de salida', peso: 2, ver: verRep,
     async mostrar(v) {
       const sols = await EPT.leer(sb.from('solicitudes').select('id,numero,estado,fecha,justificacion,pide_nombre,mecanico:mecanicos(nombre:nombre_lista),orden:ordenes(id,numero,paso,vehiculo:vehiculos(marca,modelo,placa)),lineas:solicitud_lineas(id)')
         .in('estado', ['pendiente', 'parcial', 'pendiente_almacen']).order('fecha'))
@@ -51,7 +51,7 @@
   // ---------- Ingresos de Repuestos: lo que manda el almacén (D-) y lo que devuelve el taller ----------
   const DES = { en_transito: ['En camino: registrar ingreso', 'aviso'], recibida: ['Ingresado', 'ok'], con_diferencia: ['Con diferencia', 'malo'], diferencia_resuelta: ['Diferencia resuelta', 'ok'] };
   EPT.pantalla({
-    id: 'rep_ingresos', titulo: 'Ingresos de Repuestos', pestana: 'Albaranes de entrada', grupo: 'Repuestos', icono: 'ingreso', peso: 2,
+    id: 'rep_ingresos', titulo: 'Ingresos de Repuestos', pestana: 'Albaranes de entrada', grupo: 'Repuestos', icono: 'ingreso', peso: 4,
     explica: 'Lo que ENTRA a Repuestos: lo que despacha el almacén (D-) y las piezas que devuelve el taller.',
     ver: () => ['repuestos.recibir', 'repuestos.devolucion'].some(p => EPT.puede(p)),
     async mostrar(v) {
@@ -82,7 +82,7 @@
 
   // ---------- Pedidos al almacén (requisiciones): los de las órdenes y los de reposición ----------
   EPT.pantalla({
-    id: 'rep_pedidos_alm', titulo: 'Pedidos al almacén', pestana: 'Pedidos al almacén', grupo: 'Repuestos', icono: 'deposito', peso: 5,
+    id: 'rep_pedidos_alm', titulo: 'Pedidos al almacén', pestana: 'Pedidos al almacén', grupo: 'Repuestos', icono: 'deposito', peso: 3,
     explica: 'Lo que Repuestos le pide al almacén (R-). Los de una orden se hacen dentro de la orden; aquí también se pide para reponer el estante.',
     ver: () => EPT.puede('repuestos.requisicion'),
     async mostrar(v) {
@@ -127,7 +127,7 @@
 
   // ---------- Ajustes de Repuestos (y de piezas usadas) ----------
   EPT.pantalla({
-    id: 'rep_ajustes', titulo: 'Ajustes de Repuestos', pestana: 'Ajustes', grupo: 'Repuestos', icono: 'ajuste', peso: 7,
+    id: 'rep_ajustes', titulo: 'Ajustes de Repuestos', pestana: 'Ajustes', grupo: 'Repuestos', icono: 'ajuste', peso: 8,
     explica: 'Corregir la cantidad de Repuestos o de piezas usadas después de contar. Queda en el historial con su motivo.',
     ver: () => EPT.puede('inventario.ajustar'),
     async mostrar(v) {
@@ -285,7 +285,7 @@
   let datosCat = null;
   const cargarFijo = () => EPT.memoria('catalogo', async () => {
     const [prods, tipos, pt, trans, apl, equiv] = await Promise.all([
-      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,tipo_id,subfamilia_id,cobrable,en_almacen,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto,usada,producto_base').order('descripcion')).then(EPT.alfabetico),
+      EPT.leerTodo(() => sb.from('productos').select('id,codigo,descripcion,unidad,precio,precios_extra,tipo_id,subfamilia_id,cobrable,en_almacen,marca_pieza,numero_parte,notas,minimo,activo,sin_codigo,foto,usada,producto_base').order('descripcion')).then(EPT.alfabetico),
       EPT.leer(sb.from('pieza_tipos').select('id,nombre,grupo,orden').order('orden')),
       EPT.leerTodo(() => sb.from('producto_transmisiones').select('producto_id,transmision_id').eq('activo', true), ['producto_id', 'transmision_id']),
       EPT.leer(sb.from('transmisiones').select('id,codigo,fabricante,tipo,velocidades,otros_nombres').eq('activo', true).order('codigo')),
@@ -337,7 +337,7 @@
   EPT.pantalla({
     id: 'productos', titulo: 'Productos y existencias', subtitulo: 'Busque por código, nombre, número de parte, transmisión o vehículo',
     pestana: 'Existencia', explica: 'Las piezas que hay en Repuestos, en el almacén y usadas. Busque por código, nombre, número de parte, transmisión o vehículo (ej. «Corolla 2010»).',
-    icono: 'estante', grupo: 'Repuestos', atajo: 'Existencia', peso: 1,
+    icono: 'estante', grupo: 'Repuestos', atajo: 'Existencia', peso: 5,
     ver: () => verRep() || EPT.puede('productos.gestionar') || EPT.puede('almacen.resolver') || EPT.puede('inventario.ajustar'),
     async mostrar(v) {
       if (EPT.puede('productos.gestionar')) {
@@ -467,6 +467,7 @@
         <div class="tres-col"><label class="campo">Unidad<input name="unidad" value="${esc(p ? p.unidad : 'UNID')}" maxlength="12"></label>
           <label class="campo">Precio RD$<input name="precio" type="number" min="0" step="any" value="${p ? p.precio : ''}"></label>
           <label class="campo">Mínimo<input name="minimo" type="number" min="0" step="any" value="${p ? p.minimo : 0}"></label></div>
+        ${EPT.otrosPreciosCampos(p ? p.precios_extra : [])}
         <label class="campo">Notas<input name="notas" value="${esc(p ? p.notas : '')}" maxlength="300"></label>
         <div class="campo">Transmisiones que sirve
           <input id="bTrans" placeholder="Buscar transmisión (ej. U341, RE0F10A)" style="margin-top:4px">
@@ -484,6 +485,7 @@
       alAbrir(f, dlg) {
         EPT.enlazarFamilias(datosCat.F, f);
         EPT.enlazarCobro(f);
+        EPT.enlazarOtrosPrecios(f);
         const fa = f.querySelector('#fotoArchivo');
         if (fa) fa.addEventListener('change', () => subirFoto(p, fa.files[0], dlg));
         f.querySelector('#bTrans').addEventListener('input', ev => { const q = ev.target.value.trim().toLowerCase();
@@ -495,8 +497,9 @@
         const ba = f.querySelector('#btnAjuste'); if (ba) ba.addEventListener('click', () => { dlg.close(); ajustar(p); });
       },
       async alGuardar(f) {
+        const otros = EPT.leerOtrosPrecios(f);
         const r = await EPT.rpc('ept_producto_guardar', { p_id: p ? p.id : null, p: { codigo: f.codigo.value, descripcion: f.desc.value, unidad: f.unidad.value,
-          precio: Number(f.precio.value || 0), tipo_id: f.tipo.value, marca_pieza: f.marca.value, numero_parte: f.np.value, notas: f.notas.value, minimo: Number(f.minimo.value || 0) } });
+          precio: Number(f.precio.value || 0), precios_extra: otros, tipo_id: f.tipo.value, marca_pieza: f.marca.value, numero_parte: f.np.value, notas: f.notas.value, minimo: Number(f.minimo.value || 0) } });
         // familia y si se cobra (si no eligió subfamilia, queda la que le toca por su tipo; sin elegir cobro = se cobra)
         const cobra = EPT.seCobra(f);
         if (f.subfamilia.value ? (!p || f.subfamilia.value !== p.subfamilia_id || cobra !== p.cobrable) : (p ? cobra !== p.cobrable : !cobra)) {
@@ -542,12 +545,12 @@
   }
 
   // ---------- Inicio: lo que hace Repuestos, en palabras de todos los días ----------
-  EPT.verbo({ grupo: 'Repuestos', peso: 1, prin: true, titulo: 'Despachar a una orden', sub: 'Órdenes que esperan piezas', ir: 'pedidos',
+  EPT.verbo({ grupo: 'Repuestos', peso: 3, titulo: 'Despachar a una orden', sub: 'Órdenes que esperan piezas', ir: 'pedidos',
     cuenta: () => EPT.leer(sb.from('solicitudes').select('id,orden:ordenes(paso)').in('estado', ['pendiente', 'parcial', 'pendiente_almacen'])).then(l => l.filter(s => !s.orden || s.orden.paso === 4).length) });
-  EPT.verbo({ grupo: 'Repuestos', peso: 3, titulo: 'Llegó del almacén', sub: 'Registrar un ingreso', ir: 'rep_ingresos',
+  EPT.verbo({ grupo: 'Repuestos', peso: 5, titulo: 'Llegó del almacén', sub: 'Registrar un ingreso', ir: 'rep_ingresos',
     cuenta: () => EPT.leer(sb.from('transferencias').select('id').eq('estado', 'en_transito')).then(l => l.length) });
-  EPT.verbo({ grupo: 'Repuestos', peso: 4, titulo: 'Pedir al almacén', sub: 'Para reponer el estante', ir: 'rep_pedidos_alm', hacer: pedirReposicion });
-  EPT.verbo({ grupo: 'Repuestos', peso: 5, titulo: 'Buscar una pieza', sub: 'Por nombre, código o vehículo', ir: 'productos' });
-  EPT.verbo({ grupo: 'Repuestos', peso: 6, titulo: 'Compré piezas usadas', sub: 'Registrar un lote', ir: 'usadas', hacer: () => EPT.registrarLote && EPT.registrarLote(), ver: () => EPT.puede('usadas.registrar') });
-  EPT.verbo({ grupo: 'Repuestos', peso: 7, titulo: 'Conté y no cuadra', sub: 'Hacer un ajuste', ir: 'rep_ajustes', hacer: elegirParaAjustar });
+  EPT.verbo({ grupo: 'Repuestos', peso: 6, titulo: 'Pedir al almacén', sub: 'Para reponer el estante', ir: 'rep_pedidos_alm', hacer: pedirReposicion });
+  EPT.verbo({ grupo: 'Repuestos', peso: 7, titulo: 'Buscar una pieza', sub: 'Por nombre, código o vehículo', ir: 'productos' });
+  EPT.verbo({ grupo: 'Repuestos', peso: 8, titulo: 'Compré piezas usadas', sub: 'Registrar un lote', ir: 'usadas', hacer: () => EPT.registrarLote && EPT.registrarLote(), ver: () => EPT.puede('usadas.registrar') });
+  EPT.verbo({ grupo: 'Repuestos', peso: 9, titulo: 'Conté y no cuadra', sub: 'Hacer un ajuste', ir: 'rep_ajustes', hacer: elegirParaAjustar });
 })();

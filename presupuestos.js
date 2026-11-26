@@ -31,7 +31,7 @@
   // =====================================================================
   let filtro = 'vigentes', busca = '';
   EPT.pantalla({
-    id: 'presupuestos', titulo: 'Presupuestos', pestana: 'Presupuestos', grupo: 'Repuestos', icono: 'presupuesto', peso: 4,
+    id: 'presupuestos', titulo: 'Presupuestos', pestana: 'Presupuestos', grupo: 'Repuestos', icono: 'presupuesto', peso: 6,
     explica: 'Lo que costaría un trabajo, para el cliente. Es solo una proyección: no toca el inventario. Vale 24 horas.',
     ver: () => puede() || EPT.puede('reportes.ver'),
     async mostrar(v) {
@@ -78,9 +78,11 @@
     let n = 0;
     const lineas = (pr ? pr.lineas : []).map(l => {
       const actual = l.producto_id ? prods.find(x => x.id === l.producto_id) : l.servicio_id ? servs.find(x => x.id === l.servicio_id) : null;
-      const prog = actual ? Number(actual.precio) : null;   // el precio del programa de HOY
+      // el precio del programa de HOY (si la línea lleva uno de los otros precios de la pieza, el de ese nombre)
+      const otro = l.precio_nombre && actual ? (actual.precios_extra || []).find(x => x.nombre.toUpperCase() === l.precio_nombre.toUpperCase()) : null;
+      const prog = !actual ? null : l.precio_nombre ? (otro ? Number(otro.precio) : null) : Number(actual.precio);
       return { clave: ++n, tipo: l.tipo, producto_id: l.producto_id, servicio_id: l.servicio_id, codigo: l.codigo, descripcion: l.descripcion,
-        cantidad: l.cantidad, prog, precio: l.cambiado ? l.precio : prog, cambiado: !!l.cambiado };
+        precio_nombre: l.precio_nombre || null, cantidad: l.cantidad, prog, precio: l.cambiado ? l.precio : prog, cambiado: !!l.cambiado };
     });
     const v = EPT.$('#vista');
     EPT.$('#subtitulo').textContent = pr ? 'Cambiar ' + prN(pr.numero) : 'Nuevo presupuesto';
@@ -113,7 +115,8 @@
         ${lineas.map(l => {
           const sinPrecio = !l.cambiado && !(Number(l.prog) > 0);
           return `<tr data-k="${l.clave}"><td><b>${esc(l.descripcion)}</b> ${l.codigo ? `<small class="mute">${esc(l.codigo)}</small>` : ''}
-              ${l.tipo === 'servicio' ? '<br><small class="mute">Servicio</small>' : l.tipo === 'otro' ? '<br><small class="mute">Escrito a mano</small>' : ''}</td>
+              ${l.tipo === 'servicio' ? '<br><small class="mute">Servicio</small>' : l.tipo === 'otro' ? '<br><small class="mute">Escrito a mano</small>' : ''}
+              ${l.precio_nombre ? EPT.notaKit() : ''}</td>
             <td><input class="cant c" type="number" min="0" step="any" inputmode="decimal" value="${l.cantidad}" aria-label="Cantidad"></td>
             <td>${l.cambiado ? `<input class="cant p" type="number" min="0" step="any" inputmode="decimal" value="${l.precio ?? ''}" aria-label="Precio">
                 ${l.prog != null ? `<br><small class="mute">En el programa: ${Number(l.prog) > 0 ? dinero(l.prog) : 'sin precio'}</small> <button type="button" class="liso peque" data-volver>Usar el del programa</button>` : ''}`
@@ -137,16 +140,20 @@
       v.querySelector('#btnGuardarPres').textContent = `Guardar presupuesto${lineas.length ? ` (${lineas.length} línea${lineas.length === 1 ? '' : 's'})` : ''}`;
     };
     const agregar = l => {
-      const ya = lineas.find(x => (l.producto_id && x.producto_id === l.producto_id) || (l.servicio_id && x.servicio_id === l.servicio_id));
+      const ya = lineas.find(x => (l.producto_id && x.producto_id === l.producto_id && (x.precio_nombre || null) === (l.precio_nombre || null)) || (l.servicio_id && x.servicio_id === l.servicio_id));
       if (ya) { ya.cantidad = Number(ya.cantidad || 0) + 1; pintar(); return; }
       lineas.push({ clave: ++n, cantidad: 1, cambiado: false, ...l }); pintar();
       const inp = tabla.querySelector(`tr[data-k="${n}"] input`); if (inp) { inp.focus(); inp.select(); }
     };
 
     // piezas: todas las del programa (Repuestos, almacén y usadas)
-    EPT.sugerencias(v.querySelector('.busca-doc'), prods, { libre: false, alElegir: (inp, p) => {
+    EPT.sugerencias(v.querySelector('.busca-doc'), prods, { libre: false, alElegir: async (inp, p) => {
       inp.value = ''; if (!p) return;
-      agregar({ tipo: 'pieza', producto_id: p.id, codigo: p.codigo, descripcion: p.descripcion, prog: Number(p.precio), precio: Number(p.precio) });
+      const otro = await EPT.elegirPrecio(p);   // pieza de un kit: el completo o una pieza suelta
+      if (otro === undefined) return;          // cerró sin elegir
+      const pr0 = otro ? Number(otro.precio) : Number(p.precio);
+      agregar({ tipo: 'pieza', producto_id: p.id, codigo: p.codigo, descripcion: otro ? `${p.descripcion} — ${otro.nombre}` : p.descripcion,
+        precio_nombre: otro ? otro.nombre : null, prog: pr0, precio: pr0 });
     } });
     v.querySelector('#sServ').addEventListener('change', e => {
       const val = e.target.value; e.target.value = ''; if (!val) return;
@@ -212,7 +219,7 @@
           vehiculo: { marca: f.marca.value, modelo: f.modelo.value, anio: f.anio.value, placa: f.placa.value },
           nota: f.nota.value,
           lineas: lineas.map(l => ({ producto_id: l.producto_id || null, servicio_id: l.servicio_id || null, descripcion: l.descripcion,
-            cantidad: Number(l.cantidad), cambiado: l.cambiado, precio: l.cambiado ? Number(l.precio) : undefined })) } });
+            precio_nombre: l.precio_nombre || null, cantidad: Number(l.cantidad), cambiado: l.cambiado, precio: l.cambiado ? Number(l.precio) : undefined })) } });
         EPT.aviso(`Presupuesto ${prN(r.numero)} guardado`);
         ver(r.id);
       } catch (e) { err.textContent = EPT.error(e); bt.disabled = false; err.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
@@ -260,7 +267,7 @@
           ${p.nota ? `<div class="ancho"><dt>Nota</dt><dd>${esc(p.nota)}</dd></div>` : ''}
           ${p.estado === 'anulado' ? `<div class="ancho"><dt>Anulado</dt><dd>${esc(p.motivo_anulado)}</dd></div>` : ''}</dl>
         <div class="desliza" style="margin-top:16px"><table class="tabla"><thead><tr><th>Descripción</th><th>Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Importe</th></tr></thead><tbody>
-          ${p.lineas.map(l => `<tr><td><b>${esc(l.descripcion)}</b> ${l.codigo ? `<small class="mute">${esc(l.codigo)}</small>` : ''}</td><td>${num(l.cantidad)}</td>
+          ${p.lineas.map(l => `<tr><td><b>${esc(l.descripcion)}</b> ${l.codigo ? `<small class="mute">${esc(l.codigo)}</small>` : ''}${l.precio_nombre ? EPT.notaKit('no-imprimir') : ''}</td><td>${num(l.cantidad)}</td>
             <td style="text-align:right">${dinero(l.precio)}</td><td style="text-align:right">${dinero(l.importe)}</td></tr>`).join('')}
         </tbody></table></div>
         <div class="totales-doc fijo"><div>Subtotal <b>${dinero(p.subtotal)}</b></div><div>ITBIS ${num(p.itbis_pct)} % <b>${dinero(p.itbis)}</b></div>
@@ -296,5 +303,5 @@
     });
   }
 
-  EPT.verbo({ grupo: 'Repuestos', peso: 2, titulo: 'Hacer un presupuesto', sub: 'Para un cliente · no toca el inventario', ir: 'presupuestos', hacer: () => editar(null), ver: puede });
+  EPT.verbo({ grupo: 'Repuestos', peso: 4, titulo: 'Hacer un presupuesto', sub: 'Para un cliente · no toca el inventario', ir: 'presupuestos', hacer: () => editar(null), ver: puede });
 })();

@@ -17,9 +17,11 @@
     luna: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     adelante: '<path d="M5 12h13M13 6l6 6-6 6"/>',
     reloj: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    candado: '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2.5"/>',
     usuarios: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.8 3.1 2.5 3.5 5.2"/>',
     mecanicos: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
     mas: '<path d="M12 5v14M5 12h14"/>',
+    alerta: '<path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/>',
   };
   const icono = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONOS[n] || ''}</svg>`;
 
@@ -114,7 +116,7 @@
   }).join('')}</ol>`;
   const PIEZAS_CAMBIAN = /producto|importar|catalogo|equivalencia|lote|almacen_articulo/;
   EPT.cargarProductos = () => EPT.memoria('productos', () => EPT.leerTodo(() => sb.from('productos')
-    .select('id,codigo,descripcion,unidad,numero_parte,precio,usada,codigo_barras,en_almacen').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
+    .select('id,codigo,descripcion,unidad,numero_parte,precio,precios_extra,usada,codigo_barras,en_almacen').eq('activo', true).order('descripcion')).then(EPT.alfabetico), { cambiaCon: PIEZAS_CAMBIAN });
 
   // ---------- Mecánicos y ayudantes ----------
   EPT.cargarMecanicos = () => EPT.memoria('mecanicos', () => EPT.leer(sb.from('mecanicos').select('id,nombre,tipo').eq('activo', true).order('nombre')),
@@ -266,6 +268,69 @@
       <div class="seg cobro" role="group" aria-label="${esc(etiqueta)}"><button type="button" data-cob="1" aria-pressed="${cobra === true}">Se cobra</button><button type="button" data-cob="0" aria-pressed="${cobra === false}">No se cobra</button></div>
       <input type="hidden" name="cobrable" value="${cobra === true ? '1' : cobra === false ? '0' : ''}"><small class="opc">Si no elige, se cobra.</small></div>`;
   EPT.seCobra = f => f.cobrable.value !== '0';
+
+  // ---------- Otros precios de un artículo (pieza que viene en kit) ----------
+  // El precio principal es el del kit completo; con "+ Otro precio" se agregan precios con su nombre para las piezas
+  // que vienen dentro ("Solo el pistón"), porque a veces el cliente compra una sola. Se guardan en productos.precios_extra.
+  const rdS = n => 'RD$ ' + Number(n || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const filaOtroPrecio = (x = {}) => `<div class="otro-precio">
+      <input name="opNom" maxlength="60" placeholder="Nombre, ej. Solo el pistón" aria-label="Nombre de este precio" value="${esc(x.nombre || '')}">
+      <input name="opPre" type="number" min="0" step="any" inputmode="decimal" placeholder="RD$" aria-label="Precio" value="${Number(x.precio) > 0 ? x.precio : ''}">
+      <button type="button" class="liso peque" data-op-quitar aria-label="Quitar este precio">✕</button></div>`;
+  EPT.otrosPreciosCampos = (lista = []) => `<div class="campo otros-precios">
+      <div class="op-filas">${(lista || []).map(filaOtroPrecio).join('')}</div>
+      <p class="pista op-ayuda" ${lista && lista.length ? '' : 'hidden'}>El precio de arriba es el del kit completo. Estos son para cuando el cliente compra una sola pieza del kit.</p>
+      <button type="button" class="liso peque" data-op-agregar>${icono('mas')}Otro precio <small class="opc">(pieza suelta de un kit)</small></button></div>`;
+  EPT.enlazarOtrosPrecios = f => {
+    const caja = f.querySelector('.otros-precios'); if (!caja) return;
+    const filas = caja.querySelector('.op-filas'), ayuda = caja.querySelector('.op-ayuda');
+    const ver = () => { ayuda.hidden = !filas.children.length; };
+    caja.querySelector('[data-op-agregar]').addEventListener('click', () => {
+      if (filas.children.length >= 10) { EPT.aviso('Máximo 10 precios aparte del principal', true); return; }
+      filas.insertAdjacentHTML('beforeend', filaOtroPrecio()); ver(); filas.lastElementChild.querySelector('input').focus();
+    });
+    filas.addEventListener('click', e => { const b = e.target.closest('[data-op-quitar]'); if (b) { b.closest('.otro-precio').remove(); ver(); } });
+  };
+  // Lee los renglones; los vacíos se ignoran. Avisa (marcando el campo) si falta el nombre o el precio.
+  EPT.leerOtrosPrecios = f => {
+    const lista = [], vistos = new Set();
+    for (const r of f.querySelectorAll('.otro-precio')) {
+      const nom = r.querySelector('[name=opNom]'), pre = r.querySelector('[name=opPre]');
+      const n = nom.value.trim(), v = pre.value.trim();
+      if (!n && !v) continue;
+      if (!n) { nom.classList.add('falta'); nom.focus(); throw new Error('Escriba el nombre de ese precio (ej. Solo el pistón)'); }
+      if (!(Number(v) > 0)) { pre.classList.add('falta'); pre.focus(); throw new Error(`Escriba el precio de «${n}»`); }
+      if (vistos.has(n.toUpperCase())) { nom.classList.add('falta'); nom.focus(); throw new Error(`El nombre «${n}» está repetido`); }
+      vistos.add(n.toUpperCase()); lista.push({ nombre: n, precio: Number(v) });
+    }
+    return lista;
+  };
+  // Para mostrar en la ficha: "Solo el pistón RD$ 850.00 · Solo los sellos RD$ 400.00"
+  // Nota para tener en cuenta cuando se vende una pieza suelta de un kit (la existencia es del kit completo)
+  EPT.NOTA_KIT = 'Pieza suelta de un kit: al despacharla, el programa descuenta un kit completo y ese kit queda abierto (incompleto). Tómelo en cuenta.';
+  EPT.notaKit = (extra = '') => `<p class="nota-kit ${extra}">${icono('alerta')}<span>${esc(EPT.NOTA_KIT)}</span></p>`;
+  EPT.otrosPreciosTexto = lista => (lista || []).map(x => `${esc(x.nombre)} <b>${rdS(x.precio)}</b>`).join('<br>');
+  // Si la pieza tiene otros precios, pregunta cuál lleva. Devuelve null (precio principal), {nombre, precio} o undefined si cancela.
+  EPT.elegirPrecio = p => new Promise(res => {
+    const extra = p.precios_extra || [];
+    if (!extra.length) return res(null);
+    let elegido;
+    const d = EPT.ventana({
+      titulo: '¿Qué precio lleva?', boton: '',
+      cuerpo: `<p class="mute" style="margin:0 0 8px">${esc(p.codigo)} · ${esc(p.descripcion)}</p>
+        <div class="elegir-precio">
+          <button type="button" data-ep="-1"><span>Completo</span><b>${Number(p.precio) > 0 ? rdS(p.precio) : 'Sin precio'}</b></button>
+          ${extra.map((x, i) => `<button type="button" data-ep="${i}"><span>${esc(x.nombre)}</span><b>${rdS(x.precio)}</b></button>`).join('')}</div>
+        <p class="mute" style="margin:8px 0 0;font-size:13px">Si elige una pieza suelta: ${esc(EPT.NOTA_KIT.replace(/^Pieza suelta de un kit: /, ''))}</p>`,
+      alAbrir(f, dd) {
+        f.querySelectorAll('[data-ep]').forEach(b => b.addEventListener('click', () => {
+          const i = Number(b.dataset.ep); elegido = i < 0 ? null : extra[i]; dd.close();
+        }));
+        f.querySelector('[data-ep]').focus();
+      },
+    });
+    d.addEventListener('close', () => res(elegido));
+  });
   // alCambiar(true|false) se llama al tocar; si devuelve una promesa que falla, los botones vuelven como estaban
   EPT.enlazarCobro = (raiz, alCambiar) => {
     const h = raiz.querySelector('input[name=cobrable]'), bs = [...raiz.querySelectorAll('.seg.cobro [data-cob]')];
@@ -492,8 +557,8 @@
   // y como sub-renglones debajo del departamento en el menú (como los albaranes de Libra: un módulo, varios documentos).
   EPT.pantalla = p => EPT.pantallas.push(p);
 
-  const GRUPOS = [undefined, 'Taller', 'Repuestos', 'Almacén', 'Caja', 'Administración'];
-  const ICONO_GRUPO = { Taller: 'carro', Repuestos: 'estante', 'Almacén': 'anaquel', Caja: 'caja_reg', 'Administración': 'tablero' };
+  const GRUPOS = [undefined, 'Taller', 'Repuestos', 'Almacén', 'Caja', 'Administración', 'Control de accesos'];
+  const ICONO_GRUPO = { Taller: 'carro', Repuestos: 'estante', 'Almacén': 'anaquel', Caja: 'caja_reg', 'Administración': 'tablero', 'Control de accesos': 'candado' };
   // Pantallas que esta persona puede ver, en orden fijo por departamento; dentro de cada uno, el "peso"
   // y luego el orden en que se agregaron. Lo usan el menú, las pestañas y el Inicio, así siempre coinciden.
   const pantallasVisibles = () => EPT.pantallas.map((p, i) => ({ p, i })).filter(({ p }) => !p.ver || p.ver())
@@ -545,6 +610,20 @@
   };
   EPT.recargar = () => EPT.ir(EPT.actual);
 
+  // Entradas al programa (Control de accesos): «entró» con usuario y contraseña; «abrió» ya con su sesión, una vez por pestaña.
+  // Nunca detiene el programa si falla.
+  const dispositivo = () => {
+    const ua = navigator.userAgent;
+    const so = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Otro';
+    const nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
+    const app = matchMedia('(display-mode: standalone)').matches ? 'app instalada' : nav;
+    return [so, app].filter(Boolean).join(' · ');
+  };
+  const anotarEntrada = tipo => {
+    try { if (tipo === 'abrio' && sessionStorage.getItem('ept-entrada')) return; sessionStorage.setItem('ept-entrada', '1'); } catch (_) { /* sin almacenamiento */ }
+    EPT.rpc('ept_registrar_entrada', { p_tipo: tipo, p_dispositivo: dispositivo() }).catch(() => {});
+  };
+
   async function cargarPersona() {
     const yo = await EPT.rpc('yo');
     if (!yo || !yo.id) throw new Error('Su usuario no está activo. Hable con el administrador.');
@@ -575,6 +654,7 @@
         if (error) throw new Error(/invalid login credentials/i.test(error.message) ? 'Usuario o contraseña incorrectos'
           : error.status === 401 ? 'El programa no pudo conectarse con el servidor. Avise al administrador.' : EPT.error(error));
         await cargarPersona();
+        anotarEntrada('entro');
         $('#eClave').value = '';
         await mostrarPrograma();
       } catch (e) {
@@ -622,7 +702,7 @@
 
     const { data } = await sb.auth.getSession();
     if (!data.session) return mostrarEntrada();
-    try { await cargarPersona(); await mostrarPrograma(); }
+    try { await cargarPersona(); anotarEntrada('abrio'); await mostrarPrograma(); }
     catch (e) { await sb.auth.signOut().catch(() => {}); mostrarEntrada(EPT.error(e)); }
   };
 
@@ -649,6 +729,7 @@
           <b>${esc(x.titulo)}<span class="insignia"></span></b>${x.sub ? `<span>${esc(x.sub)}</span>` : ''}</button>`;
       v.innerHTML = `
         <div class="saludo"><h2>Hola, ${esc(EPT.yo.nombre.split(' ')[0])}</h2><p>${esc(dep)} · ¿Qué va a hacer?</p></div>
+        <div id="cifras"></div>
         ${bloques.length ? bloques.map(b => `<div class="bloque"><h3>${icono(ICONO_GRUPO[b.g])}${esc(b.g)}</h3><div class="verbos">${b.vs.map(boton).join('')}</div></div>`).join('')
         : `<div class="panel"><div class="vacio">Todavía no tiene pantallas asignadas. Hable con el administrador.</div></div>`}`;
       v.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', async () => {
@@ -656,6 +737,10 @@
         if (x.ir) await EPT.ir(x.ir);
         if (x.hacer) await x.hacer();
       }));
+      // cifras del día para quien ve reportes (no detienen la pantalla)
+      if (EPT.indicadores && EPT.puede('reportes.ver')) EPT.indicadores().then(r => {
+        const c = v.querySelector('#cifras'); if (c) { c.innerHTML = r.html; r.enlazar(c); }
+      }).catch(() => {});
       // números de lo que espera (no detienen la pantalla)
       todos.forEach((x, i) => {
         if (!x.cuenta) return;

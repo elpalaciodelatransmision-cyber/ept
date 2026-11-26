@@ -18,7 +18,7 @@
 
   let vistaCaja = 'facturar';
   EPT.pantalla({
-    id: 'caja', titulo: 'Facturación y cobro', subtitulo: 'Órdenes con el expediente cerrado por Repuestos',
+    id: 'caja', peso: 1, titulo: 'Facturación y cobro', subtitulo: 'Órdenes con el expediente cerrado por Repuestos',
     icono: 'caja_reg', grupo: 'Caja', atajo: 'Facturación y cobro', ver: () => verCaja() || EPT.puede('reportes.ver'),
     async mostrar(v) {
       const [porFacturar, facturas] = await Promise.all([
@@ -65,7 +65,7 @@
     EPT.$('#titulo').textContent = 'Cobro ' + ot(o.numero);
     EPT.$('#subtitulo').textContent = `${o.cliente.nombre} · ${[o.vehiculo.marca, o.vehiculo.modelo, o.vehiculo.anio, o.vehiculo.placa].filter(Boolean).join(' ')}`;
     EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnImpCobro">${icono('imprimir')}Imprimir</button><button type="button" id="btnVolverCaja">${icono('atras')}${aCaja ? 'Caja' : 'Órdenes'}</button>`;
-    // Repuestos llega aquí al cerrar el expediente (para imprimir la orden de pago); vuelve a sus órdenes
+    // Repuestos llega aquí al cerrar el expediente (para imprimir la prefactura); vuelve a sus órdenes
     EPT.$('#btnVolverCaja').addEventListener('click', () => EPT.ir(aCaja ? 'caja' : 'ordenes'));
     EPT.$('#btnImpCobro').addEventListener('click', () => window.print());
     const pend = auts.filter(a => a.estado === 'pendiente');
@@ -82,7 +82,7 @@
       <div class="no-imprimir">${EPT.barraPasos(o.estado === 'cerrada' ? 8 : 7, !!o.entregada_en)}</div>
       ${pend.length ? `<div class="alerta">${icono('nota')}<div><b>Esperando autorización:</b> ${pend.map(a => `${a.tipo === 'descuento' ? 'descuento' : 'cargo'} ${dinero(a.importe)} (${esc(a.detalle)})`).join(', ')}. No se puede facturar hasta que Administración responda.</div></div>` : ''}
       <div class="panel comprobante"><div class="cuerpo">
-        <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>${f ? 'Expediente de cobro · factura de referencia ' + esc(f.numero_externo) : 'Orden de pago · páguese en Caja'} · no es comprobante fiscal</span></div></div>
+        <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>${f ? 'Expediente de cobro · factura de referencia ' + esc(f.numero_externo) : 'PREFACTURA · llévela a Caja para facturar y pagar'} · no es comprobante fiscal</span></div></div>
         <div class="fila"><span class="ot-num">${ot(o.numero)}</span>${f ? chip(FAC, f.estado) : '<span class="estado aviso">Por facturar</span>'}${o.estado === 'cerrada' && (!f || f.estado !== 'cerrada') ? '<span class="estado ok">Orden cerrada</span>' : ''}</div>
         <dl class="datos"><div><dt>Cliente</dt><dd>${esc(o.cliente.nombre)}${o.cliente.telefono ? ' · ' + esc(o.cliente.telefono) : ''}</dd></div>
           <div><dt>Vehículo</dt><dd>${esc([o.vehiculo.marca, o.vehiculo.modelo, o.vehiculo.anio].filter(Boolean).join(' '))} <b>${esc(o.vehiculo.placa)}</b></dd></div>
@@ -152,7 +152,7 @@
 
   // ---------- Autorizaciones (Administración) ----------
   EPT.pantalla({
-    id: 'autorizaciones', titulo: 'Autorizaciones', subtitulo: 'Cargos y descuentos que esperan su visto bueno',
+    id: 'autorizaciones', peso: 1, titulo: 'Autorizaciones', subtitulo: 'Cargos y descuentos que esperan su visto bueno',
     icono: 'sello', grupo: 'Administración', atajo: 'Autorizaciones', ver: () => EPT.puede('autorizar'),
     async mostrar(v) {
       const filas = await EPT.leer(sb.from('autorizaciones').select('id,tipo,detalle,importe,estado,fecha,pedido_por,pide:usuarios!autorizaciones_pedido_por_fkey(nombre),orden:ordenes(id,numero,cliente:clientes(nombre))').eq('estado', 'pendiente').order('fecha'));
