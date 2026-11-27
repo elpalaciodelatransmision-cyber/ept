@@ -89,15 +89,21 @@
     return e;
   }
 
-  // Se imprime en una hoja aparte (marco invisible) del tamaño exacto de la etiqueta, sin tocar la pantalla del programa
+  // Se imprime en una hoja aparte (marco invisible), sin tocar la pantalla del programa.
+  // La etiqueta física corre A LO LARGO en la Zebra (50.8 mm de ancho × 76.2 mm de largo), así que la hoja es
+  // de 50.8 × 76.2 y la etiqueta va girada 90° (lo de arriba queda a la derecha), igual que la prueba aprobada del 26 nov.
   function imprimir(html) {
+    html = html.split('<div class="etq">').filter(Boolean).map(e => '<div class="hoja"><div class="etq">' + e + '</div>').join('');
     const marco = document.createElement('iframe');
     marco.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
     document.body.append(marco);
     const doc = marco.contentDocument;
     doc.open();
     doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiqueta</title><style>${CSS_ETQ}
-@page{size:76.2mm 50.8mm;margin:0}html,body{margin:0;padding:0;background:#fff}</style></head><body>${html}</body></html>`);
+@page{size:50.8mm 76.2mm;margin:0}html,body{margin:0;padding:0;background:#fff}
+.hoja{width:50.8mm;height:76.2mm;position:relative;overflow:hidden;break-inside:avoid}
+.hoja+.hoja{break-before:page;page-break-before:always}
+.hoja .etq{position:absolute;left:0;top:0;transform-origin:0 0;transform:translateX(50.8mm) rotate(90deg)}</style></head><body>${html}</body></html>`);
     doc.close();
     setTimeout(() => {
       marco.contentWindow.focus(); marco.contentWindow.print();
