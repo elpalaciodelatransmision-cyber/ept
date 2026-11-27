@@ -1,8 +1,8 @@
 // EPT CONTROL OPERATIVO · permite instalar la app y abrirla rápido.
 // Solo guarda los archivos del programa; los datos SIEMPRE vienen del servidor (nunca se guardan aquí).
-const VERSION = 'ept-2026-11-27-1';
-const ARCHIVOS = ['./', './index.html', './estilos.css', './comun.js', './taller.js', './servicios.js', './repuestos.js', './usadas.js', './presupuestos.js',
-  './catalogo.js', './almacen.js', './caja.js', './reportes.js', './integracion.js', './admin.js', './lib/supabase-2.45.4.js', './lib/xlsx-0.18.5.min.js', './manifest.json', './icono-192.png', './icono-512.png'];
+const VERSION = 'ept-2026-11-27-2';
+const ARCHIVOS = ['./', './index.html', './estilos.css', './comun.js', './etiquetas.js', './taller.js', './servicios.js', './repuestos.js', './usadas.js', './presupuestos.js',
+  './catalogo.js', './almacen.js', './caja.js', './reportes.js', './integracion.js', './admin.js', './lib/supabase-2.45.4.js', './lib/xlsx-0.18.5.min.js', './lib/jsbarcode.min.js', './manifest.json', './icono-192.png', './icono-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));

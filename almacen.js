@@ -135,6 +135,7 @@
         v.querySelector('#cCero').textContent = filtrada.filter(p => p.hay <= 0).length;
         caja.innerHTML = lista.length ? `<ul class="lista">${lista.map(p => `<li class="toca" data-a="${p.id}"><span class="codigo">${esc(p.codigo)}</span>
             <div class="q"><b>${esc(p.descripcion)}</b><span>${[CLASE_ART[p.clase_articulo], F.nombre(p.subfamilia_id), p.marca_pieza, p.numero_parte, p.estante ? 'Estante ' + p.estante : '', p.cobrable ? '' : 'No se cobra'].filter(Boolean).map(esc).join(' · ')}</span></div>
+            <button type="button" class="liso peque btn-etq" data-etq="${p.id}" title="Imprimir la etiqueta con código de barras">${icono('etiqueta')}<span class="txt">Etiqueta</span></button>
             ${cuadroQueda(p)}</li>`).join('')}</ul>`
           : `<div class="vacio">${!arts.length ? 'Todavía no hay artículos en el almacén.' : soloInv === 'bajo' ? 'Nada bajo el mínimo: no hay que reponer.' : soloInv === 'cero' ? 'No hay artículos agotados.' : 'No hay artículos con esa búsqueda.'}</div>`;
       };
@@ -146,7 +147,11 @@
         const c = bi.value.trim(); const p = activos.find(x => x.codigo_barras === c || x.codigo.toUpperCase() === c.toUpperCase());
         if (p) { e.preventDefault(); bi.select(); fichaArticulo(p, F); }
       });
-      caja.addEventListener('click', e => { const li = e.target.closest('[data-a]'); if (li) fichaArticulo(activos.find(p => p.id === li.dataset.a), F); });
+      caja.addEventListener('click', e => {
+        const be = e.target.closest('[data-etq]');
+        if (be) return etiquetaDe(activos.find(p => p.id === be.dataset.etq)).catch(err => EPT.aviso(EPT.error(err), true));
+        const li = e.target.closest('[data-a]'); if (li) fichaArticulo(activos.find(p => p.id === li.dataset.a), F);
+      });
       pintar();
     },
   });
@@ -228,6 +233,18 @@
         }));
       },
     });
+  }
+
+  // ---------- Etiqueta Zebra (etiquetas.js) ----------
+  // Si el artículo no tiene código de barras, se le crea uno y se guarda sin cambiar ningún otro dato
+  function etiquetaDe(p) {
+    return EPT.abrirEtiqueta(p, puedeAlm('articulos') ? async codigo => {
+      await EPT.rpc('ept_almacen_articulo_guardar', { p: {
+        id: p.id, descripcion: p.descripcion, subfamilia_id: p.subfamilia_id, cobrable: p.cobrable, clase_articulo: p.clase_articulo || 'pieza',
+        precio: p.precio, precios_extra: p.precios_extra || [], unidad: p.unidad, marca_pieza: p.marca_pieza, numero_parte: p.numero_parte, minimo: p.minimo,
+        empaque_nombre: p.empaque_nombre, empaque_unidades: p.empaque_unidades, codigo_barras: codigo, notas: p.notas } });
+      p.codigo_barras = codigo; EPT.olvidar('productos');
+    } : null);
   }
 
   // ---------- Crear o editar un artículo (como la ficha de artículo de Libra) ----------
