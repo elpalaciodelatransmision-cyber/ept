@@ -260,7 +260,7 @@
         <div class="dos"><label class="campo">Unidad<select name="unidad">${['UNID', 'GALÓN', 'LITRO', 'CUARTO', 'PAR', 'JUEGO', 'PIE', 'METRO', 'LIBRA', 'CAJAS'].map(u => `<option ${u === (p ? p.unidad : 'UNID') ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
           <label class="campo">Mínimo de reposición<input name="minimo" type="number" min="0" step="any" inputmode="decimal" value="${p ? Number(p.minimo) || '' : ''}"></label></div>
         <div class="dos"><label class="campo">Empaque <small class="opc">(opcional)</small><select name="emp"><option value="">Ninguno</option>${['Caja', 'Paquete', 'Docena'].map(e => `<option ${p && p.empaque_nombre === e ? 'selected' : ''}>${e}</option>`).join('')}</select></label>
-          <label class="campo">Unidades por empaque<input name="porEmp" type="number" min="1" step="1" inputmode="numeric" value="${p && Number(p.empaque_unidades) > 1 ? p.empaque_unidades : ''}"></label></div>
+          <label class="campo">Unidades por empaque<input name="porEmp" type="number" min="1" step="1" inputmode="numeric" value="${p && p.empaque_nombre && Number(p.empaque_unidades) >= 1 ? p.empaque_unidades : ''}"></label></div>
         ${nuevo ? `<label class="campo">Estante <small class="opc">(opcional)</small><input name="estante" maxlength="40"></label>` : ''}
         <div class="dos"><label class="campo">Código <small class="opc">${nuevo ? '(vacío = se pone solo, ej. SOL-001)' : ''}</small><input name="codigo" maxlength="30" value="${esc(p ? p.codigo : '')}" ${nuevo ? '' : 'disabled'}></label>
           <label class="campo">Código de barras <small class="opc">(opcional)</small><input name="barras" maxlength="40" value="${esc(p ? p.codigo_barras : op.barras || '')}" placeholder="Escanéelo aquí"></label></div>
@@ -291,7 +291,7 @@
         if (!f.desc.value.trim()) { f.desc.classList.add('falta'); f.desc.focus(); throw new Error('Escriba el nombre'); }
         if (!f.subfamilia.value) { f.familia.classList.add('falta'); f.familia.focus(); throw new Error('Elija la familia y la subfamilia'); }
         const otros = EPT.leerOtrosPrecios(f);
-        if (f.emp.value && !(Number(f.porEmp.value) > 1)) { f.porEmp.classList.add('falta'); f.porEmp.focus(); throw new Error('Escriba cuántas unidades trae cada ' + f.emp.value.toLowerCase()); }
+        if (f.emp.value && !(Number.isInteger(Number(f.porEmp.value)) && Number(f.porEmp.value) >= 1)) { f.porEmp.classList.add('falta'); f.porEmp.focus(); throw new Error('Escriba cuántas unidades trae cada ' + f.emp.value.toLowerCase()); }
         const r = await EPT.rpc('ept_almacen_articulo_guardar', { p: {
           id: p ? p.id : null, codigo: nuevo ? f.codigo.value : undefined, descripcion: f.desc.value, subfamilia_id: f.subfamilia.value, cobrable: EPT.seCobra(f),
           clase_articulo: f.clase.value, precio: f.precio.value, precios_extra: otros, unidad: f.unidad.value, marca_pieza: f.marca.value, numero_parte: f.ref.value, minimo: f.minimo.value,
