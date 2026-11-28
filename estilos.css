@@ -216,6 +216,7 @@ button.peque{min-height:36px;padding:0 12px;font-size:14px}
 input.grande{font-size:24px;font-weight:700;min-height:56px;text-align:center}
 .alerta{display:flex;gap:10px;align-items:flex-start;padding:12px 16px;margin-bottom:14px;border-radius:var(--r);background:color-mix(in srgb,var(--acento) 18%,var(--panel));border:1px solid color-mix(in srgb,var(--acento) 55%,var(--line))}
 .alerta .ico{color:var(--acento-t);margin-top:2px}
+.alerta.malo{background:color-mix(in srgb,var(--malo) 12%,var(--panel));border-color:color-mix(in srgb,var(--malo) 55%,var(--line))}.alerta.malo .ico{color:var(--malo)}
 .ot-num{font-size:22px;font-weight:800;letter-spacing:.02em}
 .ficha-ot .fila{gap:14px}
 .datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 24px;margin:16px 0 0}

@@ -180,7 +180,7 @@
       EPT.leer(sb.from('almacen_registros').select('fecha,tipo,antes,despues,nota,usuario:usuarios(nombre)').eq('producto_id', p.id).eq('tipo', 'traslado').order('fecha', { ascending: false }).limit(10)),
       EPT.leer(sb.from('historial_almacen_viejo').select('fecha,tipo,cantidad,presentacion,nota').eq('producto_id', p.id).order('fecha', { ascending: false }).limit(30)),
     ]);
-    const TIPO = { ingreso_almacen: 'Ingreso', despacho_persona: 'Despacho a una persona', devolucion_suplidor: 'Devolución al suplidor', transferencia_salida: 'Despacho a Repuestos',
+    const TIPO = { ingreso_almacen: 'Ingreso', despacho_persona: 'Despacho a una persona', devolucion_suplidor: 'Devolución al suplidor', anulacion_ingreso: 'Factura anulada (se restó)', transferencia_salida: 'Despacho a Repuestos',
       transferencia_diferencia: 'Diferencia de despacho', ajuste: 'Ajuste', carga_inicial: 'Existencia inicial', importacion: 'Importación' };
     const hist = [
       ...movs.map(m => ({ f: m.fecha, t: `${TIPO[m.tipo] || m.tipo} ${Number(m.cantidad) > 0 ? '+' : ''}${num(m.cantidad)}`, n: m.nota, q: m.usuario?.nombre })),
@@ -364,7 +364,7 @@
   const fechaDia = f => new Date(f).toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const cargarDocs = tipo => { const [a, b] = limites(); return EPT.leer(sb.from('almacen_documentos')
-    .select('id,tipo,clase,serie,numero,fecha,suplidor,numero_factura,ncf,para,motivo,total,usuario:usuarios(nombre),lineas:almacen_documento_lineas(renglon,cantidad,presentacion,importe,diferencia,estante_despues,producto:productos(codigo,descripcion,unidad))')
+    .select('id,tipo,clase,serie,numero,fecha,suplidor,numero_factura,ncf,para,motivo,total,usuario:usuarios(nombre),anulacion:almacen_anulaciones(motivo),lineas:almacen_documento_lineas(renglon,cantidad,presentacion,importe,diferencia,estante_despues,producto:productos(codigo,descripcion,unidad))')
     .eq('tipo', tipo).gte('fecha', a).lt('fecha', b).order('fecha', { ascending: false }).limit(3000)); };
   const textoDoc = d => EPT.llano([codDoc(d), d.suplidor, d.numero_factura, d.ncf, d.para, d.motivo, d.usuario?.nombre,
     ...(d.lineas || []).flatMap(l => [l.producto?.codigo, l.producto?.descripcion])].join(' '));
@@ -450,12 +450,15 @@
     await recargar();
   }
   // un albarán del almacén (IN, DP, DS, TR, AJ) listo para la lista
+  // una factura anulada (corregida) se queda en la lista marcada «Anulada» y su importe no cuenta en los totales
+  const anulDe = d => (Array.isArray(d.anulacion) ? d.anulacion[0] : d.anulacion) || null;
   const itemDoc = (d, titulo, quien) => ({
-    f: d.fecha, codigo: codDoc(d), titulo, quien, chip: '<span class="estado ok">Registrado</span>', filtro: d.clase,
+    f: d.fecha, codigo: codDoc(d), titulo, quien, filtro: d.clase,
+    chip: anulDe(d) ? '<span class="estado malo">Anulada</span>' : '<span class="estado ok">Registrado</span>',
     sub: `${DOC[d.clase].corto} · ${cuantos((d.lineas || []).length)}${Number(d.total) > 0 ? ' · ' + dinero(d.total) : ''} · ${fecha(d.fecha)}${d.usuario ? ' · ' + d.usuario.nombre : ''}`,
     texto: textoDoc(d), abrir: () => abrirDocumento(d.id),
     lineas: [...(d.lineas || [])].sort((a, b) => a.renglon - b.renglon).map(l => ({ codigo: l.producto?.codigo || '', descripcion: l.producto?.descripcion || '',
-      unidad: d.tipo === 'traslado' ? '' : l.producto?.unidad || '', importe: l.importe,
+      unidad: d.tipo === 'traslado' ? '' : l.producto?.unidad || '', importe: anulDe(d) ? 0 : l.importe,
       cant: d.tipo === 'traslado' ? 'a ' + (l.estante_despues || '') : d.tipo === 'ajuste' ? (Number(l.diferencia) > 0 ? '+' : '') + num(l.diferencia) : num(l.cantidad) + (/ de /.test(l.presentacion) ? ` (${l.presentacion})` : '') })),
   });
   const botonNuevo = (texto, clase) => {
@@ -530,7 +533,9 @@
   // =====================================================================
   // Documento nuevo: 1) cabecera  2) artículos (escanear o buscar)  3) guardar
   // =====================================================================
-  async function nuevoDocumento(clase, conArticulos = []) {
+  // copia: {de, suplidor, doc_suplidor, numero_factura, ncf, fecha_factura, itbis, lineas: [{producto_id, cantidad, costo}]}
+  //   cuando se corrige una factura de compra: la pantalla sale llena con lo que tenía la factura anulada
+  async function nuevoDocumento(clase, conArticulos = [], copia = null) {
     const D = DOC[clase];
     if (!puedeAlm(D.permiso)) { EPT.aviso('No tiene permiso para esto', true); return; }
     const [arts, F, mecs, sups] = await Promise.all([cargarInventario(), EPT.cargarFamilias(), clase === 'persona' ? EPT.cargarMecanicos() : [],
@@ -577,6 +582,7 @@
     v.innerHTML = `<div class="panel"><div class="cuerpo doc-nuevo">
       ${hermanas.length > 1 ? `<div class="seg" role="group" style="margin-bottom:6px">${hermanas.map(k => `<button type="button" data-cl="${k}" aria-pressed="${k === clase}">${esc(DOC[k].nombre)}</button>`).join('')}</div>` : ''}
       <form id="fDoc" novalidate>
+        ${copia ? `<div class="alerta">${icono('ok')}<div><b>La ${esc(copia.de)} quedó anulada.</b> Aquí está llena con lo mismo que tenía: corrija lo que estaba mal y guárdela.</div></div>` : ''}
         <div class="paso-doc"><i>1</i>${{ compra: '¿De qué suplidor y qué factura?', interno: '¿Por qué entra?', persona: '¿A quién se despacha?', suplidor: '¿A qué suplidor y por qué?', traslado: 'Nota', conteo: '¿Por qué se cuenta?' }[clase]}</div>
         ${cabecera}
         <datalist id="lSups">${suplidores.map(s => `<option value="${esc(s)}">`).join('')}</datalist>
@@ -609,7 +615,7 @@
       if (!todos.some(x => x.id === p.id)) { EPT.aviso(`${p.codigo} no es del almacén`, true); return; }
       let l = lineas.find(x => x.p.id === p.id);
       if (l) { if (D.tipo !== 'traslado' && D.tipo !== 'ajuste') l.cant = Number(l.cant || 0) + 1; }
-      else { l = { p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', estante: '', contado: '' }; lineas.push(l); }
+      else { l = { p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', itbis: true, estante: '', contado: '' }; lineas.push(l); }
       pintar();
       const inp = enfocar && tabla.querySelector(`tr[data-pid="${p.id}"] input`); if (inp) { inp.focus(); inp.select(); }
     };
@@ -617,7 +623,7 @@
     // actualizan los números calculados, así el cursor no se pierde al pasar de un campo a otro.
     const unidadCosto = l => (l.por > 1 ? l.p.empaque_nombre : l.p.unidad).toLowerCase();
     const pintar = () => {
-      const cab = { ingreso: `<th>Artículo</th><th>Hay ahora</th><th>Cantidad</th><th>En</th>${conCosto ? '<th>Costo</th><th style="text-align:right">Importe</th>' : ''}`,
+      const cab = { ingreso: `<th>Artículo</th><th>Hay ahora</th><th>Cantidad</th><th>En</th>${conCosto ? '<th>Costo</th><th style="text-align:right">Importe</th><th style="text-align:center">ITBIS</th>' : ''}`,
         despacho: '<th>Artículo</th><th>Hay ahora</th><th>Cantidad</th><th>En</th>',
         traslado: '<th>Artículo</th><th>Está en</th><th>Estante nuevo</th>',
         ajuste: '<th>Artículo</th><th>Dice el programa</th><th>Contado</th><th>Diferencia</th>' }[D.tipo];
@@ -628,7 +634,8 @@
         const celdas = {
           ingreso: `${art}<td>${num(p.hay)}</td>${cant}<td>${enSel}<br><small class="mute eq"></small></td>
             ${conCosto ? `<td><input class="cant costo" type="number" min="0" step="any" inputmode="decimal" value="${l.costo}" aria-label="Costo"><br><small class="mute">por ${esc(unidadCosto(l))}</small></td>
-            <td class="imp" style="text-align:right"></td>` : ''}`,
+            <td class="imp" style="text-align:right"></td>
+            <td style="text-align:center"><input class="lit" type="checkbox" ${l.itbis ? 'checked' : ''} ${conItbis ? '' : 'disabled'} title="Marcado: este artículo paga ITBIS. Desmarcado: está exento." aria-label="Paga ITBIS" style="width:22px;height:22px;min-height:22px;margin:0"></td>` : ''}`,
           despacho: `${art}<td class="hay">${num(p.hay)}</td>${cant}<td>${enSel}<br><small class="mute eq"></small></td>`,
           traslado: `${art}<td>${esc(p.estante || 'sin estante')}</td><td><input class="cant est" maxlength="40" value="${esc(l.estante)}" style="width:120px" aria-label="Estante nuevo"></td>`,
           // en el ajuste, si tiene empaque, se puede contar por cajas y sueltas: el programa suma las unidades
@@ -657,23 +664,28 @@
       }
       if (conCosto) calcularTotales();
     };
-    // totales de la factura de compra: el ITBIS se calcula al 18 % salvo que se escriba a mano
+    // totales de la factura de compra: el ITBIS es el 18 % de los artículos marcados con ITBIS (los desmarcados
+    // son exentos), salvo que se escriba a mano
     let itbisMano = null, conItbis = true;
-    const subtotal = () => lineas.reduce((a, l) => a + Math.round(Number(l.cant || 0) * Number(l.costo || 0) * 100) / 100, 0);
-    const itbisDe = sub => !conItbis ? 0 : itbisMano != null ? itbisMano : Math.round(sub * 18) / 100;
+    const importe = l => Math.round(Number(l.cant || 0) * Number(l.costo || 0) * 100) / 100;
+    const subtotal = () => lineas.reduce((a, l) => a + importe(l), 0);
+    const exento = () => lineas.reduce((a, l) => a + (l.itbis ? 0 : importe(l)), 0);
+    const itbisDe = () => !conItbis ? 0 : itbisMano != null ? itbisMano : Math.round((subtotal() - exento()) * 18) / 100;
     const pintarTotales = () => {
       const caja = v.querySelector('#totales');
       caja.innerHTML = `<div class="totales-doc">
         <div>Subtotal <b class="sub"></b></div>
+        <div class="exento" hidden>Exento de ITBIS <b class="exe"></b></div>
         <label class="check"><input type="checkbox" name="llevaItbis" ${conItbis ? 'checked' : ''}> <span>La factura trae ITBIS</span></label>
         <label class="campo-linea">ITBIS RD$<input name="itbis" type="number" min="0" step="any" inputmode="decimal" ${conItbis ? '' : 'disabled'}></label>
         <div class="total">Total de la factura <b class="tot"></b></div></div>`;
-      caja.querySelector('[name=llevaItbis]').addEventListener('change', e => { conItbis = e.target.checked; caja.querySelector('[name=itbis]').disabled = !conItbis; calcularTotales(); });
+      caja.querySelector('[name=llevaItbis]').addEventListener('change', e => { conItbis = e.target.checked; caja.querySelector('[name=itbis]').disabled = !conItbis; tabla.querySelectorAll('.lit').forEach(x => { x.disabled = !conItbis; }); calcularTotales(); });
       caja.querySelector('[name=itbis]').addEventListener('input', e => { itbisMano = e.target.value === '' ? null : Number(e.target.value); calcularTotales(true); });
     };
     const calcularTotales = (escribiendo) => {
-      const caja = v.querySelector('#totales'); const sub = subtotal(), it = itbisDe(sub);
+      const caja = v.querySelector('#totales'); const sub = subtotal(), exe = conItbis ? exento() : 0, it = itbisDe();
       caja.querySelector('.sub').textContent = dinero(sub);
+      caja.querySelector('.exento').hidden = !(exe > 0); caja.querySelector('.exe').textContent = dinero(exe);
       if (!escribiendo) caja.querySelector('[name=itbis]').value = conItbis ? it : 0;
       caja.querySelector('.tot').textContent = dinero(sub + it);
     };
@@ -688,6 +700,7 @@
         tr.querySelector('.tot-cajas').textContent = l.cant === '' ? '—' : num(l.cant);
       }
       if (e.target.classList.contains('costo')) l.costo = e.target.value;
+      if (e.target.classList.contains('lit')) l.itbis = e.target.checked;
       if (e.target.classList.contains('est')) l.estante = e.target.value;
       calcular();
     });
@@ -724,7 +737,19 @@
       cuantos: p => { const l = lineas.find(x => x.p.id === p.id); return l ? Number(l.cant || 0) : null; }, alAgregar: p => agregar(todos.find(x => x.id === p.id), false) }));
     // lo escaneado con el cursor fuera del buscador también se agrega a este documento
     EPT.alEscanear = p => { if (!document.body.contains(f)) return false; const x = todos.find(y => y.id === p.id); if (!x) return false; agregar(x); return true; };
-    conArticulos.forEach(id => { const p = todos.find(x => x.id === id); if (p) lineas.push({ p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', estante: '', contado: '' }); });
+    if (copia) {
+      for (const k of ['suplidor', 'doc_suplidor', 'numero_factura', 'ncf', 'fecha_factura']) if (f[k] && copia[k]) f[k].value = copia[k];
+      const faltan = [];
+      for (const c of copia.lineas) {
+        const p = todos.find(x => x.id === c.producto_id);
+        if (p) lineas.push({ p, cant: Number(c.cantidad), por: 1, costo: Number(c.costo), itbis: true, estante: '', contado: '' }); else faltan.push(c.descripcion);
+      }
+      if (faltan.length) EPT.aviso('Estos artículos ya no están activos y no se copiaron: ' + faltan.join(', '), true);
+      // el ITBIS como estaba: sin ITBIS, el 18 % de siempre, o el que se escribió a mano
+      if (!(Number(copia.itbis) > 0)) conItbis = false;
+      else if (Math.abs(Number(copia.itbis) - itbisDe()) > 0.009) itbisMano = Number(copia.itbis);
+    }
+    conArticulos.forEach(id => { const p = todos.find(x => x.id === id); if (p) lineas.push({ p, cant: D.tipo === 'ajuste' ? '' : 1, por: 1, costo: Number(p.ultimo_costo) || Number(p.costo) || '', itbis: true, estante: '', contado: '' }); });
     pintar();
     (f.querySelector('input:not([type=hidden])') || bArt).focus();
 
@@ -759,7 +784,7 @@
         const r = await EPT.rpc('ept_almacen_documento', { p: {
           tipo: D.tipo, clase, suplidor: val('suplidor'), doc_suplidor: val('doc_suplidor'), numero_factura: val('numero_factura'), ncf: val('ncf'),
           fecha_factura: val('fecha_factura'), para, motivo: val('motivo'),
-          itbis: conCosto ? itbisDe(subtotal()) : 0,
+          itbis: conCosto ? itbisDe() : 0,
           lineas: lineas.map(l => {
             const por = Number(l.por || 1), cant = Number(l.cant || 0);
             return { producto_id: l.p.id, cantidad: D.tipo === 'ajuste' ? cant : cant * por,
@@ -821,11 +846,16 @@
   async function abrirDocumento(id, recien) {
     const v = EPT.$('#vista'); v.innerHTML = '<div class="vacio">Cargando…</div>';
     const d = await EPT.leer(sb.from('almacen_documentos')
-      .select('*,usuario:usuarios(nombre),lineas:almacen_documento_lineas(renglon,cantidad,presentacion,costo,importe,estante_antes,estante_despues,sistema,diferencia,hay_despues,producto:productos(codigo,descripcion,unidad))')
+      .select('*,usuario:usuarios(nombre),anulacion:almacen_anulaciones(motivo,fecha,usuario:usuarios(nombre)),lineas:almacen_documento_lineas(renglon,producto_id,cantidad,presentacion,costo,importe,estante_antes,estante_despues,sistema,diferencia,hay_despues,producto:productos(codigo,descripcion,unidad))')
       .eq('id', id).single());
+    const an = anulDe(d);
     const D = DOC[d.clase]; const ls = [...d.lineas].sort((a, b) => a.renglon - b.renglon);
     EPT.$('#subtitulo').textContent = D.nombre + ' ' + codDoc(d);
     EPT.$('#barraBotones').innerHTML = `<button type="button" id="btnImprimir">${icono('imprimir')}Imprimir</button><button type="button" id="btnVolverDoc">${icono('atras')}Volver</button>`;
+    if (d.clase === 'compra' && !an && puedeAlm('ingreso')) {
+      EPT.$('#barraBotones').insertAdjacentHTML('afterbegin', `<button type="button" id="btnCorregir">${icono('ajuste')}Corregir factura</button>`);
+      EPT.$('#btnCorregir').addEventListener('click', () => corregirFactura(d, ls));
+    }
     EPT.$('#btnImprimir').addEventListener('click', () => window.print());
     EPT.$('#btnVolverDoc').addEventListener('click', () => EPT.ir(LISTA_DE[d.tipo]));
     const cab = { ingreso: `<th>Código</th><th>Artículo</th><th>Cantidad</th>${d.clase === 'compra' ? '<th style="text-align:right">Costo</th><th style="text-align:right">Importe</th>' : ''}<th>Quedó</th>`,
@@ -840,9 +870,10 @@
         ajuste: `${c}<td>${num(l.sistema)}</td><td>${num(l.cantidad)}</td><td><b class="${l.diferencia > 0 ? 'txt-ok' : l.diferencia < 0 ? 'txt-malo' : 'mute'}">${l.diferencia > 0 ? '+' : ''}${num(l.diferencia)}</b></td>` }[d.tipo]; };
     v.innerHTML = `
       ${recien ? `<div class="alerta">${icono('ok')}<div><b>Registrado.</b> ${d.tipo === 'ingreso' ? 'La existencia ya subió' + (d.clase === 'compra' ? ' y el costo quedó al día.' : '.') : d.tipo === 'despacho' ? 'La existencia ya bajó.' : d.tipo === 'traslado' ? 'Los estantes ya cambiaron.' : 'La existencia quedó como se contó.'}</div></div>` : ''}
+      ${an ? `<div class="alerta malo">${icono('alerta')}<div><b>Factura anulada</b> el ${fecha(an.fecha)}${an.usuario ? ' por ' + esc(an.usuario.nombre) : ''}. Motivo: ${esc(an.motivo)}. Lo que había sumado ya se restó de la existencia.</div></div>` : ''}
       <div class="panel comprobante"><div class="cuerpo">
         <div class="comp-cab"><span class="logo"></span><div><b>EL PALACIO DE LA TRANSMISIÓN</b><span>${esc(D.nombre)} · documento interno del almacén</span></div></div>
-        <div class="fila"><span class="ot-num">${codDoc(d)}</span><span class="estado ok">Registrado</span></div>
+        <div class="fila"><span class="ot-num">${codDoc(d)}</span>${an ? '<span class="estado malo">Anulada</span>' : '<span class="estado ok">Registrado</span>'}</div>
         <dl class="datos">
           <div><dt>Fecha</dt><dd>${fecha(d.fecha)}</dd></div>
           <div><dt>Registró</dt><dd>${esc(d.usuario?.nombre || '')}</dd></div>
@@ -858,6 +889,24 @@
         <div class="firmas"><div>${d.tipo === 'despacho' ? 'Despachó (Almacén)' : 'Registró (Almacén)'}</div><div>${d.tipo === 'despacho' ? 'Recibió' : d.clase === 'compra' ? 'Entregó (suplidor)' : 'Revisó'}</div></div>
       </div>`;
     window.scrollTo(0, 0);
+  }
+
+  // Corregir una factura de compra: se anula (no se borra), se resta lo que sumó y se abre una copia llena para
+  // guardarla bien. Si ya salió parte de lo que entró, el servidor no deja y explica por qué.
+  function corregirFactura(d, ls) {
+    EPT.ventana({ titulo: 'Corregir factura ' + codDoc(d), boton: 'Anular y corregir',
+      cuerpo: `<p style="margin-top:0">La ${codDoc(d)} quedará <b>anulada</b> (no se borra: queda en el historial) y lo que sumó se resta de la existencia. Enseguida se abre una copia llena para que la guarde corregida.</p>
+        <label class="campo">¿Qué estaba mal?<input name="motivo" maxlength="200" required placeholder="Ej. faltaron artículos, costo equivocado"></label>`,
+      alGuardar: async f => {
+        const motivo = f.motivo.value.trim();
+        if (!motivo) { f.motivo.focus(); throw new Error('Escriba qué estaba mal'); }
+        await EPT.rpc('ept_almacen_anular', { p_documento: d.id, p_motivo: motivo });
+        EPT.olvidar('productos');
+        EPT.aviso(codDoc(d) + ' anulada. Corrija y guarde la factura.');
+        nuevoDocumento('compra', [], { de: codDoc(d), suplidor: d.suplidor, doc_suplidor: d.doc_suplidor, numero_factura: d.numero_factura,
+          ncf: d.ncf, fecha_factura: d.fecha_factura, itbis: d.itbis,
+          lineas: ls.map(l => ({ producto_id: l.producto_id, cantidad: l.cantidad, costo: l.costo, descripcion: l.producto?.descripcion || '' })) });
+      } });
   }
 
   // =====================================================================
